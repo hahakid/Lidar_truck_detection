@@ -57,6 +57,7 @@ def get_imu_data():
             origin = (x2, y2)
         xy_scale_factor = 0.8505  # 修正坐标转换的误差
         # xy_scale_factor = 1  # 修正坐标转换的误差
+        # xy_scale_factor = 1  # 修正坐标转换的误差
         x, y = (x2 - origin[0]) * xy_scale_factor, (y2 - origin[1]) * xy_scale_factor
         file_path = yield x, y, float(direction)
 
@@ -102,10 +103,9 @@ def get_window_merged(start_pos, length=3):
         # 获取imu数据
         abs_x, abs_y, heading = imu_data_processer.send(os.path.join(imu_path, '%d.txt' % i))
         # 旋转并平移
-        if length > 1:
-            velo = rotate(velo, heading)
-            velo[:, 0] = abs_x + velo[:, 0]
-            velo[:, 1] = abs_y + velo[:, 1]
+        velo = rotate(velo, heading)
+        velo[:, 0] = abs_x + velo[:, 0]
+        velo[:, 1] = abs_y + velo[:, 1]
         merged.append(velo[:, :3])
         steps.append(np.ones([velo.shape[0], 1]) * (i * 128))
     # 合并多帧
@@ -130,18 +130,6 @@ def overlap_voxelization(point_cloud, overlap_frame_count, voxel_granularity=400
     _, _, voxel, _, _ = voxel_converter(xyz_range=border_thresh, mag_coeff=voxel_granularity)
     # 过滤地面
     voxel = filter_ground(voxel)
-
-    # xx, yy, zz = np.where(voxel1 > 0)
-    # mayavi.mlab.points3d(xx, yy, zz,
-    #                      # clustering.labels_,
-    #                      # mayavi.mlab.points3d(xx, yy, zz,
-    #                      # steps,  # Values used for Color
-    #                      mode="point",
-    #                      colormap='spectral',  # 'bone', 'copper', 'gnuplot'
-    #                      figure=fig,
-    #                      color=(1, 1, 1),  # Used a fixed (r,g,b) instead
-    #                      scale_factor=1,
-    #                      )
 
     return voxel
 
@@ -195,24 +183,24 @@ def process_clustering_result(xx, yy, zz, cl_rst, fig):
             [x_min, y_min, z_max],
         ])
         # 　顶部底部平面
-        # mlab.plot3d(
-        #     bounding_box[0:10, 0],
-        #     bounding_box[0:10, 1],
-        #     bounding_box[0:10, 2],
-        #     line_width=20,
-        #     tube_radius=0.1,
-        #     tube_sides=12
-        # )
-        # # 侧面三条线
-        # for i in range(1, 4):
-        #     mlab.plot3d(
-        #         bounding_box[[i, i + 5], 0],
-        #         bounding_box[[i, i + 5], 1],
-        #         bounding_box[[i, i + 5], 2],
-        #         line_width=20,
-        #         tube_radius=0.1,
-        #         tube_sides=12
-        #     )
+        mlab.plot3d(
+            bounding_box[0:10, 0],
+            bounding_box[0:10, 1],
+            bounding_box[0:10, 2],
+            line_width=20,
+            tube_radius=0.1,
+            tube_sides=12
+        )
+        # 侧面三条线
+        for i in range(1, 4):
+            mlab.plot3d(
+                bounding_box[[i, i + 5], 0],
+                bounding_box[[i, i + 5], 1],
+                bounding_box[[i, i + 5], 2],
+                line_width=20,
+                tube_radius=0.1,
+                tube_sides=12
+            )
         represents_list.append([
             (x_max + x_min) / 2, (y_max + y_min) / 2, (z_max + z_min) / 2, category_id
         ])
@@ -243,7 +231,7 @@ if __name__ == '__main__':
     voxel_granularity = 400
     # 真实世界尺度(米)对应的voxel格子数
     voxel_scale = voxel_granularity / (border_thresh[3] - border_thresh[0])
-    seq_id = 3
+    seq_id = 1
     # 初始化imu数据
     imu_path = './data/imuseq/%d' % seq_id
     # imu数据处理器
@@ -279,37 +267,37 @@ if __name__ == '__main__':
         # 处理聚类结果
         centers = process_clustering_result(xx, yy, zz * 100, cl_rst, fig)
         print(centers.shape)
-        # nodes = mayavi.mlab.points3d(
-        #     centers[:, 0],
-        #     centers[:, 1],
-        #     centers[:, 2],
-        #     # clustering.labels_,
-        #     # mode="cube",
-        #     mode="cube",
-        #     # color=(0, 1, 0),
-        #     colormap='spectral',
-        #     figure=fig,
-        #     scale_factor=3
-        # )
-        # nodes.glyph.scale_mode = 'scale_by_vector'
-        # nodes.mlab_source.dataset.point_data.scalars = centers[:, 3] / max(centers[:, 3])
-        # xx, yy, zz = np.where(overlapped_pc_mat > 0)
-        # mayavi.mlab.points3d(
-        #     xx, yy, zz,
-        #     # clustering.labels_,
-        #     # mode="cube",
-        #     mode="point",
-        #     # color=(0, 1, 0),
-        #     colormap='spectral',
-        #     figure=fig,
-        #     scale_factor=1
-        # )
-        # # mlab.outline()
-        # # mlab.show()
-        # # xy平面0度 z轴0度 摄像机离xy平面300米 焦点在整个图形中点
-        # mlab.view(0, 30, 540, focalpoint=(overlapped_pc_mat.shape[0] / 2, overlapped_pc_mat.shape[1] / 2, 0))
-        # # 创建文件夹并保存
-        # if not os.path.exists('./output/%d' % (seq_id)):
-        #     os.mkdir('./output/%d' % (seq_id))
-        # mlab.savefig(filename='./output/%d/%d.png' % (seq_id, frame_id), figure=fig)
-        # mlab.clf()
+        nodes = mayavi.mlab.points3d(
+            centers[:, 0],
+            centers[:, 1],
+            centers[:, 2],
+            # clustering.labels_,
+            # mode="cube",
+            mode="cube",
+            # color=(0, 1, 0),
+            colormap='spectral',
+            figure=fig,
+            scale_factor=3
+        )
+        nodes.glyph.scale_mode = 'scale_by_vector'
+        nodes.mlab_source.dataset.point_data.scalars = centers[:, 3] / max(centers[:, 3])
+        xx, yy, zz = np.where(overlapped_pc_mat > 0)
+        mayavi.mlab.points3d(
+            xx, yy, zz,
+            # clustering.labels_,
+            # mode="cube",
+            mode="point",
+            # color=(0, 1, 0),
+            colormap='spectral',
+            figure=fig,
+            scale_factor=1
+        )
+        # mlab.outline()
+        # mlab.show()
+        # xy平面0度 z轴0度 摄像机离xy平面300米 焦点在整个图形中点
+        mlab.view(0, 30, 540, focalpoint=(overlapped_pc_mat.shape[0] / 2, overlapped_pc_mat.shape[1] / 2, 0))
+        # 创建文件夹并保存
+        if not os.path.exists('./output/%d' % (seq_id)):
+            os.mkdir('./output/%d' % (seq_id))
+        mlab.savefig(filename='./output/%d/%d.png' % (seq_id, frame_id), figure=fig)
+        mlab.clf()
