@@ -87,7 +87,7 @@ def get_window_merged(start_pos, length=3):
     :return:
     """
     merged = []
-    steps = []
+    imu_data = []
     # 读取一系列帧数据
     for i in range(start_pos, start_pos + length):
         # 获取点云数据
@@ -107,11 +107,13 @@ def get_window_merged(start_pos, length=3):
         velo[:, 0] = abs_x + velo[:, 0]
         velo[:, 1] = abs_y + velo[:, 1]
         merged.append(velo[:, :3])
-        steps.append(np.ones([velo.shape[0], 1]) * (i * 128))
+
+        # 存储第一帧的imu数据
+        if len(imu_data) == 0:
+            imu_data = np.array([abs_x, abs_y, heading])
     # 合并多帧
     merged = np.vstack(merged)
-    steps = np.vstack(steps).reshape(-1)
-    return merged, steps
+    return merged, imu_data
 
 
 def overlap_voxelization(point_cloud, overlap_frame_count, voxel_granularity=400):
@@ -124,14 +126,14 @@ def overlap_voxelization(point_cloud, overlap_frame_count, voxel_granularity=400
     :return:
     """
     # 获得融合后的第一帧
-    pc_frame1, _ = get_window_merged(start_pos=point_cloud, length=overlap_frame_count)
+    pc_frame1, imu_mat = get_window_merged(start_pos=point_cloud, length=overlap_frame_count)
     # 计算体素
     voxel_converter = pointclouds_to_voxelgrid.data_loader(point_list=pc_frame1)
     _, _, voxel, _, _ = voxel_converter(xyz_range=BORDER_TH, mag_coeff=voxel_granularity)
     # 过滤地面
     voxel = filter_ground(voxel)
 
-    return voxel
+    return voxel, imu_mat
 
 
 def test_slam():
@@ -165,8 +167,12 @@ def process_clustering_result(xx, yy, zz, cl_rst, fig):
         y_max = points[:, 1].max()
         z_min = points[:, 2].min()
         z_max = points[:, 2].max()
+
         # 删除底面积过小的块
         if (abs(x_max - x_min) / voxel_scale) * (abs(y_max - y_min) / voxel_scale) < 2: continue
+
+        # 删除大于车身长度过长的块
+        if np.sqrt((x_max - x_min) ** 2 + (y_max - y_min) ** 2) > 18 * voxel_scale: continue
         # 绘制bounding box
         # bounding_box = np.vstack([
         #     # 底部平面
@@ -249,7 +255,7 @@ def track(prev, cur, distance_th, beta1, beta2):
                     min_distance_center_idx = idx
         # 据当前点最短点的距离小于阈值 即目标没消失
         if min_distance < distance_th:
-            print('MIN: ', cur[min_distance_center_idx])
+            # print('MIN: ', cur[min_distance_center_idx])
 
             # 对xy坐标进行指数加权平均 beta * (prev + V * t) + (1 - beta) * cur
             cur[min_distance_center_idx][:2] = \
@@ -290,12 +296,11 @@ def track(prev, cur, distance_th, beta1, beta2):
                 prev_center[7] += np.sqrt(prev_center[4] ** 2 + prev_center[5] ** 2) * FRAME_TIME_INTERVAL
                 center_list.append(prev_center.tolist())
     # 把当前列表中的 从前没有出现过的新节点添加到当前帧
-    # TODO 新增的中心点要有新的标号
     for cur_center in cur:
         if cur_center[3] != np.inf:
-            print('NEW: ', cur_center)
+            # print('NEW: ', cur_center)
             center_list.append(list(cur_center))
-    print('=' * 20)
+    # print('=' * 20)
     # return np.vstack(center_list)
     return np.array(center_list)
 
@@ -346,8 +351,8 @@ if __name__ == '__main__':
             frame_id = int(frame_file.replace('.bin', ''))
             if not os.path.exists(os.path.join(velo_path, '%d.bin' % (frame_id + OVERLAP_FRAME_COUNT))):
                 break
-            # 重叠并体素化
-            overlapped_pc_mat = overlap_voxelization(
+            # 重叠并体素化 同时获取第一帧的imu数据 以在未来做逆变换
+            overlapped_pc_mat, imu_mat = overlap_voxelization(
                 point_cloud=frame_id,
                 overlap_frame_count=OVERLAP_FRAME_COUNT,
                 voxel_granularity=VOXEL_GRANULARITY

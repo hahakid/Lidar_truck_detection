@@ -29,7 +29,7 @@ video = cv2.VideoWriter(
     fps,
     (1855, 1006)
 )
-for i in range(1, 31):
+for i in range(1, 26):
     base_dir = './output/%d' % i
     file_list = os.listdir(base_dir)
     file_list = sorted(file_list * 3, key=functools.cmp_to_key(cmp_file))
