@@ -1,6 +1,7 @@
 import functools
 import os
 import csv
+import time
 
 import mayavi
 import pyproj
@@ -20,7 +21,7 @@ def filter_ground(point_cloud_mat, grid_size=3):
     过滤掉地面
     :param point_cloud_mat: 点云
     :param grid_size: 网格大小
-    :return:
+    :return: 过滤掉地面后的点云
     """
     for i in range(0, point_cloud_mat.shape[0], grid_size):
         for j in range(0, point_cloud_mat.shape[1], grid_size):
@@ -131,7 +132,7 @@ def overlap_voxelization(point_cloud, overlap_frame_count, voxel_granularity=400
     voxel_converter = pointclouds_to_voxelgrid.data_loader(point_list=pc_frame1)
     _, _, voxel, _, _ = voxel_converter(xyz_range=BORDER_TH, mag_coeff=voxel_granularity)
     # 过滤地面
-    voxel = filter_ground(voxel)
+    voxel = filter_ground(voxel, grid_size=FG_GRID_SIZE)
 
     return voxel, imu_mat
 
@@ -249,7 +250,7 @@ def track(prev, cur, distance_th, beta1, beta2):
     """
     center_list = []
     for prev_center in prev:
-        print('PREV: ', prev_center)
+        # print('PREV: ', prev_center)
         min_distance = 99999999
         min_distance_center_idx = None
         # 查找最短距离点
@@ -288,7 +289,7 @@ def track(prev, cur, distance_th, beta1, beta2):
             # 生命周期增加
             cur[min_distance_center_idx][6] = prev_center[6] + 1
 
-            # 累计速路程增加
+            # 累计路程增加
             cur[min_distance_center_idx][7] = \
                 prev_center[7] + np.sqrt(
                     cur[min_distance_center_idx][4] ** 2 + cur[min_distance_center_idx][5] ** 2
@@ -312,8 +313,6 @@ def track(prev, cur, distance_th, beta1, beta2):
         if cur_center[3] != np.inf:
             # print('NEW: ', cur_center)
             center_list.append(list(cur_center))
-    # print('=' * 20)
-    # return np.vstack(center_list)
     return np.array(center_list)
 
 
@@ -389,11 +388,14 @@ if __name__ == '__main__':
     # 重叠的帧数
     OVERLAP_FRAME_COUNT = 2
 
-    # 点云边界
+    # 点云边界 x1,y1,1 x2,y2,z2
     BORDER_TH = (-60, -50, -1.9, 60, 50, 2.4)
 
     # 体素化粒度
     VOXEL_GRANULARITY = 400
+
+    # 过滤地面所使用的网格算法的网格大小
+    FG_GRID_SIZE = 3
 
     # 聚类参数
     CLUSTERING_EPS = 1.3
@@ -412,7 +414,7 @@ if __name__ == '__main__':
     BETA_V = 0.75
 
     # 是否可视化
-    VISUALIZE = False
+    VISUALIZE = True
 
     # 追踪并可视化
     for seq_id in range(1, 31):
@@ -430,10 +432,10 @@ if __name__ == '__main__':
         # 上一帧的目标列表
         last_frame_tracking_list = []
         # 初始化绘图的figure
-        if VISUALIZE: fig = mayavi.mlab.figure(mlab.gcf(), bgcolor=(0, 0, 0), size=(640 * 2, 360 * 2))
+        fig = mayavi.mlab.figure(mlab.gcf(), bgcolor=(0, 0, 0), size=(640 * 2, 360 * 2)) if VISUALIZE else None
         # 计算多帧的聚类结果
         for frame_file in sorted(os.listdir(velo_path), key=functools.cmp_to_key(cmp)):
-            print(frame_file)
+            start = time.clock()
             frame_id = int(frame_file.replace('.bin', ''))
             if not os.path.exists(os.path.join(velo_path, '%d.bin' % (frame_id + OVERLAP_FRAME_COUNT))):
                 break
@@ -473,8 +475,11 @@ if __name__ == '__main__':
 
             # 保存为下一阵的前驱结果
             last_frame_tracking_list = tracking_list
-            print('=' * 20)
-            print('FRAME # %d: ' % frame_id)
+
+            # tracking list的坐标均为大地坐标系
+            print('=' * 15, 'FRAME # %d: ' % frame_id, '=' * 15)
+            elapsed = (time.clock() - start)
+            print("Time used:", elapsed)
             print(tracking_list)
 
             if VISUALIZE:
