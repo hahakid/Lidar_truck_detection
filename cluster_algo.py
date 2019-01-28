@@ -127,7 +127,7 @@ def overlap_voxelization(point_cloud, overlap_frame_count, voxel_granularity=400
     pc_frame1, _ = get_window_merged(start_pos=point_cloud, length=overlap_frame_count)
     # 计算体素
     voxel_converter = pointclouds_to_voxelgrid.data_loader(point_list=pc_frame1)
-    _, _, voxel, _, _ = voxel_converter(xyz_range=border_thresh, mag_coeff=voxel_granularity)
+    _, _, voxel, _, _ = voxel_converter(xyz_range=BORDER_TH, mag_coeff=voxel_granularity)
     # 过滤地面
     voxel = filter_ground(voxel)
 
@@ -218,14 +218,15 @@ def process_clustering_result(xx, yy, zz, cl_rst, fig):
     return represents_list
 
 
-def track(prev, cur, distance_th, beta=0.4):
+def track(prev, cur, distance_th, beta1, beta2):
     """
     跟踪目标
-    目标列表矩阵的结构: [x,y,z,类别,Vx,Vy,Life,TotalV]
+    目标列表矩阵的结构: [x,y,z,类别,Vx,Vy,Life,TotalDis]
     :param prev: 前一帧的目标列表
     :param cur: 当前帧检测算出来的中心
     :param distance_th: 两帧之间最近点的最远距离阈值
-    :param beta: 权重衰减值
+    :param beta1: 位置估计权重衰减值
+    :param beta2: 速度估计权重衰减值
     :return: 当前帧的目标列表
     """
     center_list = []
@@ -249,24 +250,31 @@ def track(prev, cur, distance_th, beta=0.4):
         # 据当前点最短点的距离小于阈值 即目标没消失
         if min_distance < distance_th:
             print('MIN: ', cur[min_distance_center_idx])
+
             # 对xy坐标进行指数加权平均 beta * (prev + V * t) + (1 - beta) * cur
             cur[min_distance_center_idx][:2] = \
-                beta * (prev_center[0:2] + FRAME_TIME_INTERVAL * prev_center[4:6]) \
-                + (1 - beta) * (cur[min_distance_center_idx][:2])
+                beta1 * (prev_center[0:2] + FRAME_TIME_INTERVAL * prev_center[4:6]) \
+                + (1 - beta1) * (cur[min_distance_center_idx][:2])
+
             # 当前最近点的label设置为与上一个点相同 仅坐标为当前点的
             cur[min_distance_center_idx][3] = prev_center[3]
+
             # 计算速度
             # Vx
             Vx = (cur[min_distance_center_idx][0] - prev_center[0]) / voxel_scale / FRAME_TIME_INTERVAL
-            cur[min_distance_center_idx][4] = beta * prev_center[4] + (1 - beta) * Vx
+            cur[min_distance_center_idx][4] = beta2 * prev_center[4] + (1 - beta2) * Vx
             # Vy
             Vy = (cur[min_distance_center_idx][1] - prev_center[1]) / voxel_scale / FRAME_TIME_INTERVAL
-            cur[min_distance_center_idx][5] = beta * prev_center[5] + (1 - beta) * Vy
+            cur[min_distance_center_idx][5] = beta2 * prev_center[5] + (1 - beta2) * Vy
+
             # 生命周期增加
             cur[min_distance_center_idx][6] = prev_center[6] + 1
-            # 累计速度增加
+
+            # 累计速路程增加
             cur[min_distance_center_idx][7] = \
-                prev_center[7] + (cur[min_distance_center_idx][4] ** 2 + cur[min_distance_center_idx][5] ** 2)
+                prev_center[7] + np.sqrt(
+                    cur[min_distance_center_idx][4] ** 2 + cur[min_distance_center_idx][5] ** 2
+                ) * FRAME_TIME_INTERVAL
 
             # 加入当前帧的结果列表
             center_list.append(cur[min_distance_center_idx].tolist())
@@ -279,7 +287,7 @@ def track(prev, cur, distance_th, beta=0.4):
                 prev_center[6] -= 1
                 # 用速度预估下一帧位置
                 prev_center[0:2] += FRAME_TIME_INTERVAL * prev_center[4:6]
-                prev_center[7] += (prev_center[4] ** 2 + prev_center[5] ** 2)
+                prev_center[7] += np.sqrt(prev_center[4] ** 2 + prev_center[5] ** 2) * FRAME_TIME_INTERVAL
                 center_list.append(prev_center.tolist())
     # 把当前列表中的 从前没有出现过的新节点添加到当前帧
     # TODO 新增的中心点要有新的标号
@@ -293,119 +301,139 @@ def track(prev, cur, distance_th, beta=0.4):
 
 
 if __name__ == '__main__':
-    # 可视化
-    # 帧间隔
+    # 帧时间间隔(s)
     FRAME_TIME_INTERVAL = 0.1
+
+    # 重叠的帧数
+    OVERLAP_FRAME_COUNT = 2
+
     # 体素边界
-    border_thresh = (-50, -60, -1.9, 50, 60, 2.4)
-    voxel_granularity = 400
+    BORDER_TH = (-60, -50, -1.9, 60, 50, 2.4)
+
+    # 体素化粒度
+    VOXEL_GRANULARITY = 400
+
     # 真实世界尺度(米)对应的voxel格子数
-    voxel_scale = voxel_granularity / (border_thresh[3] - border_thresh[0])
-    seq_id = 2
-    # 初始化imu数据
-    imu_path = './data/imuseq/%d' % seq_id
-    # imu数据处理器
-    imu_data_processer = get_imu_data()
-    next(imu_data_processer)
-    # 获得多帧融合之后的点云
-    velo_path = './data/veloseq/%d' % seq_id
+    voxel_scale = VOXEL_GRANULARITY / (BORDER_TH[3] - BORDER_TH[0])
 
-    # 上一帧的结果
-    last_frame_centers = []
-    increasing_id = 0
-    # 计算多帧的聚类结果
-    for frame_file in sorted(os.listdir(velo_path), key=functools.cmp_to_key(cmp)):
+    # 聚类参数
+    CLUSTERING_EPS = 1.3
+    CLUSTERING_MIN_SP = 5
+
+    # 近邻传播的距离阈值
+    NN_DISTANCE_TH = 2.5
+
+    # 指数加权平均滤波的阈值 pos为位置 v为速度
+    BETA_POS = 0.3
+    BETA_V = 0.75
+
+    # 追踪并可视化
+    for seq_id in range(1, 31):
+        # 初始化imu数据
+        imu_path = './data/imuseq/%d' % seq_id
+        # imu数据处理器
+        imu_data_processer = get_imu_data()
+        next(imu_data_processer)
+        # 获得多帧融合之后的点云
+        velo_path = './data/veloseq/%d' % seq_id
+
+        # 上一帧的结果
+        last_frame_centers = []
+        # 计算多帧的聚类结果
         fig = mayavi.mlab.figure(mlab.gcf(), bgcolor=(0, 0, 0), size=(640 * 2, 360 * 2))
-        print(frame_file)
-        frame_id = int(frame_file.replace('.bin', ''))
-        if not os.path.exists(os.path.join(velo_path, '%d.bin' % (frame_id + 3 + 3))):
-            break
-        # if frame_id < 230: continue
-        # 重叠并体素化
-        overlapped_pc_mat = overlap_voxelization(
-            point_cloud=frame_id,
-            overlap_frame_count=2,
-            voxel_granularity=voxel_granularity
-        )
-        # xx, yy, zz = np.where(compared_mat > 0)
-        xx, yy, zz = np.where(overlapped_pc_mat > 0)
-        # 放缩z轴
-        zz = np.array(zz, dtype=np.float32) * 0.01
-
-        # 聚类
-        clustering = DBSCAN(eps=1.3 * voxel_scale, min_samples=5, n_jobs=-1).fit(
-            np.hstack([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)])
-        )
-        cl_rst = np.array(clustering.labels_)
-        # ID自增 防止LABEL重复
-        increasing_id += len(set(clustering.labels_))
-        # 处理聚类结果
-        centers = process_clustering_result(xx, yy, zz, cl_rst, fig)
-        print(centers.shape)
-        # 与上一帧的结果对比并追踪目标
-        if len(last_frame_centers) > 0:
-            centers = track(
-                prev=last_frame_centers, cur=centers,
-                distance_th=2.5 * voxel_scale,
-                beta=0.3
+        for frame_file in sorted(os.listdir(velo_path), key=functools.cmp_to_key(cmp)):
+            print(frame_file)
+            frame_id = int(frame_file.replace('.bin', ''))
+            if not os.path.exists(os.path.join(velo_path, '%d.bin' % (frame_id + OVERLAP_FRAME_COUNT))):
+                break
+            # 重叠并体素化
+            overlapped_pc_mat = overlap_voxelization(
+                point_cloud=frame_id,
+                overlap_frame_count=OVERLAP_FRAME_COUNT,
+                voxel_granularity=VOXEL_GRANULARITY
             )
-            print('LABELS: ', centers[:, 3])
-            print('=' * 20)
-        last_frame_centers = centers
+            # xx, yy, zz = np.where(compared_mat > 0)
+            xx, yy, zz = np.where(overlapped_pc_mat > 0)
+            # 放缩z轴
+            zz = np.array(zz, dtype=np.float32) * 0.01
 
-        # 可视化结果
-        # 仅可视化出现3帧以上的目标
-        centers = centers[
-            np.where(
-                centers[:, 6] > 2
+            if len(xx) == 0: continue
+            # 聚类
+            clustering = DBSCAN(
+                eps=CLUSTERING_EPS * voxel_scale,
+                min_samples=CLUSTERING_MIN_SP,
+                n_jobs=-1).fit(
+                np.hstack([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)])
             )
-        ]
-        if len(centers) == 0: continue
-        nodes = mayavi.mlab.points3d(
-            centers[:, 0],
-            centers[:, 1],
-            centers[:, 2] * 100,
-            # clustering.labels_,
-            # mode="cube",
-            mode="cube",
-            # color=(0, 1, 0),
-            # vmax=100,
-            colormap='spectral',
-            figure=fig,
-            scale_factor=3
-        )
-        for center in centers:
-            mayavi.mlab.text3d(
-                center[0] + 2,
-                center[1] + 2,
-                center[2] * 100 + 2,
-                '%.0f (%.1f, %.1f)' % (
-                    center[3],
-                    np.sqrt(center[4] ** 2 + center[5] ** 2),
-                    # center[7]
-                    np.arctan(center[4] / center[5])
-                ),
-                scale=5,
+            cl_rst = np.array(clustering.labels_)
+            # 处理聚类结果
+            centers = process_clustering_result(xx, yy, zz, cl_rst, fig)
+            print(centers.shape)
+            # 与上一帧的结果对比并追踪目标
+            if len(last_frame_centers) > 0:
+                centers = track(
+                    prev=last_frame_centers, cur=centers,
+                    distance_th=NN_DISTANCE_TH * voxel_scale,
+                    beta1=BETA_POS,
+                    beta2=BETA_V
+                )
+                print('LABELS: ', centers[:, 3])
+                print('=' * 20)
+            last_frame_centers = centers
+
+            # 可视化结果
+            # 仅可视化出现3帧以上的目标
+            centers = centers[
+                np.where(
+                    centers[:, 6] > 2
+                )
+            ]
+            if len(centers) == 0: continue
+            nodes = mayavi.mlab.points3d(
+                centers[:, 0],
+                centers[:, 1],
+                centers[:, 2] * 100,
+                # clustering.labels_,
+                # mode="cube",
+                mode="cube",
+                # color=(0, 1, 0),
+                # vmax=100,
+                colormap='spectral',
                 figure=fig,
+                scale_factor=3
             )
-        nodes.glyph.scale_mode = 'scale_by_vector'
-        nodes.mlab_source.dataset.point_data.scalars = centers[:, 3] / max(centers[:, 3])
-        # nodes.mlab_source.dataset.point_data.scalars = centers[:, 7] / max(centers[:, 7])
-        xx, yy, zz = np.where(overlapped_pc_mat > 0)
-        mayavi.mlab.points3d(
-            xx, yy, zz,
-            # clustering.labels_,
-            # mode="cube",
-            mode="point",
-            # color=(0, 1, 0),
-            colormap='spectral',
-            figure=fig,
-            scale_factor=1
-        )
-        # xy平面0度 z轴0度 摄像机离xy平面300米 焦点在整个图形中点
-        mlab.view(0, 30, 640, focalpoint=(overlapped_pc_mat.shape[0] / 2, overlapped_pc_mat.shape[1] / 2, 0))
-        # 创建文件夹并保存
-        if not os.path.exists('./output/%d' % (seq_id)):
-            os.mkdir('./output/%d' % (seq_id))
-        mlab.savefig(filename='./output/%d/%d.png' % (seq_id, frame_id), figure=fig)
-        mlab.clf()
+            for center in centers:
+                mayavi.mlab.text3d(
+                    center[0] + 2,
+                    center[1] + 2,
+                    center[2] * 100 + 2,
+                    '%.0f (%.1f, %.1f)' % (
+                        center[3],
+                        np.sqrt(center[4] ** 2 + center[5] ** 2),
+                        np.arctan(center[4] / center[5]),
+                    ),
+                    scale=5,
+                    figure=fig,
+                )
+            nodes.glyph.scale_mode = 'scale_by_vector'
+            nodes.mlab_source.dataset.point_data.scalars = centers[:, 3] / max(centers[:, 3])
+            # nodes.mlab_source.dataset.point_data.scalars = centers[:, 7] / max(centers[:, 7])
+            xx, yy, zz = np.where(overlapped_pc_mat > 0)
+            mayavi.mlab.points3d(
+                xx, yy, zz,
+                # clustering.labels_,
+                # mode="cube",
+                mode="point",
+                # color=(0, 1, 0),
+                colormap='spectral',
+                figure=fig,
+                scale_factor=1
+            )
+            # mlab.outline()
+            # xy平面0度 z轴0度 摄像机离xy平面300米 焦点在整个图形中点
+            mlab.view(0, 30, 640, focalpoint=(overlapped_pc_mat.shape[0] / 2, overlapped_pc_mat.shape[1] / 2, 0))
+            # 创建文件夹并保存
+            if not os.path.exists('./output/%d' % (seq_id)):
+                os.mkdir('./output/%d' % (seq_id))
+            mlab.savefig(filename='./output/%d/%d.png' % (seq_id, frame_id), figure=fig)
+            mlab.clf()
