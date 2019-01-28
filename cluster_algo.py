@@ -168,20 +168,20 @@ def process_clustering_result(xx, yy, zz, cl_rst, fig):
         # 删除底面积过小的块
         if (abs(x_max - x_min) / voxel_scale) * (abs(y_max - y_min) / voxel_scale) < 2: continue
         # 绘制bounding box
-        bounding_box = np.vstack([
-            # 底部平面
-            [x_min, y_min, z_min],
-            [x_min, y_max, z_min],
-            [x_max, y_max, z_min],
-            [x_max, y_min, z_min],
-            [x_min, y_min, z_min],
-            # 上部平面
-            [x_min, y_min, z_max],
-            [x_min, y_max, z_max],
-            [x_max, y_max, z_max],
-            [x_max, y_min, z_max],
-            [x_min, y_min, z_max],
-        ])
+        # bounding_box = np.vstack([
+        #     # 底部平面
+        #     [x_min, y_min, z_min],
+        #     [x_min, y_max, z_min],
+        #     [x_max, y_max, z_min],
+        #     [x_max, y_min, z_min],
+        #     [x_min, y_min, z_min],
+        #     # 上部平面
+        #     [x_min, y_min, z_max],
+        #     [x_min, y_max, z_max],
+        #     [x_max, y_max, z_max],
+        #     [x_max, y_min, z_max],
+        #     [x_min, y_min, z_max],
+        # ])
         # 　顶部底部平面
         # mlab.plot3d(
         #     bounding_box[0:10, 0],
@@ -201,23 +201,31 @@ def process_clustering_result(xx, yy, zz, cl_rst, fig):
         #         tube_radius=0.1,
         #         tube_sides=12
         #     )
-        # 将标定框
+        # represents_list.append([
+        #     (x_max + x_min) / 2, (y_max + y_min) / 2, (z_max + z_min) / 2,  # XYZ坐标
+        #     category_id,  # 类别ID
+        #     0, 0  # 新点的Vx和Vy速度均为0
+        # ])
+        # 使用算术中心
         represents_list.append([
-            (x_max + x_min) / 2, (y_max + y_min) / 2, (z_max + z_min) / 2,  # XYZ坐标
-            category_id,  # 类别ID
-            0, 0  # 新点的Vx和Vy速度均为0
+            np.mean(points[:, 0]), np.mean(points[:, 1]), np.mean(points[:, 2]),  # XYZ坐标
+            category_id + frame_id,  # 类别ID+帧ID 得到唯一ID
+            0, 0,  # 新点的Vx和Vy速度均为0,
+            0,  # 生命周期
+            0,  # 累计速度
         ])
     represents_list = np.array(represents_list)
     return represents_list
 
 
-def track(prev, cur, distance_th):
+def track(prev, cur, distance_th, beta=0.4):
     """
     跟踪目标
-    目标列表矩阵的结构: [x,y,z,类别,Vx,Vy]
+    目标列表矩阵的结构: [x,y,z,类别,Vx,Vy,Life,TotalV]
     :param prev: 前一帧的目标列表
     :param cur: 当前帧检测算出来的中心
     :param distance_th: 两帧之间最近点的最远距离阈值
+    :param beta: 权重衰减值
     :return: 当前帧的目标列表
     """
     center_list = []
@@ -238,22 +246,41 @@ def track(prev, cur, distance_th):
                 if distance < min_distance:
                     min_distance = distance
                     min_distance_center_idx = idx
-        # 据当前点最短点的距离小于阈值
+        # 据当前点最短点的距离小于阈值 即目标没消失
         if min_distance < distance_th:
             print('MIN: ', cur[min_distance_center_idx])
+            # 对xy坐标进行指数加权平均 beta * (prev + V * t) + (1 - beta) * cur
+            cur[min_distance_center_idx][:2] = \
+                beta * (prev_center[0:2] + FRAME_TIME_INTERVAL * prev_center[4:6]) \
+                + (1 - beta) * (cur[min_distance_center_idx][:2])
             # 当前最近点的label设置为与上一个点相同 仅坐标为当前点的
             cur[min_distance_center_idx][3] = prev_center[3]
             # 计算速度
             # Vx
-            cur[min_distance_center_idx][4] = \
-                (cur[min_distance_center_idx][0] - prev_center[0]) / voxel_scale / FRAME_TIME_INTERVAL
+            Vx = (cur[min_distance_center_idx][0] - prev_center[0]) / voxel_scale / FRAME_TIME_INTERVAL
+            cur[min_distance_center_idx][4] = beta * prev_center[4] + (1 - beta) * Vx
             # Vy
-            cur[min_distance_center_idx][5] = \
-                (cur[min_distance_center_idx][1] - prev_center[1]) / voxel_scale / FRAME_TIME_INTERVAL
+            Vy = (cur[min_distance_center_idx][1] - prev_center[1]) / voxel_scale / FRAME_TIME_INTERVAL
+            cur[min_distance_center_idx][5] = beta * prev_center[5] + (1 - beta) * Vy
+            # 生命周期增加
+            cur[min_distance_center_idx][6] = prev_center[6] + 1
+            # 累计速度增加
+            cur[min_distance_center_idx][7] = \
+                prev_center[7] + (cur[min_distance_center_idx][4] ** 2 + cur[min_distance_center_idx][5] ** 2)
+
             # 加入当前帧的结果列表
             center_list.append(cur[min_distance_center_idx].tolist())
             # 标记当前位置已经选择过
             cur[min_distance_center_idx][3] = np.inf
+        else:
+            # 如果上一帧的目标消失了 仅当上一帧生命周期消失了再删除 否则仍加入下一帧的tracking list里
+            if prev_center[6] > 0:
+                # 生命周期减少
+                prev_center[6] -= 1
+                # 用速度预估下一帧位置
+                prev_center[0:2] += FRAME_TIME_INTERVAL * prev_center[4:6]
+                prev_center[7] += (prev_center[4] ** 2 + prev_center[5] ** 2)
+                center_list.append(prev_center.tolist())
     # 把当前列表中的 从前没有出现过的新节点添加到当前帧
     # TODO 新增的中心点要有新的标号
     for cur_center in cur:
@@ -274,7 +301,7 @@ if __name__ == '__main__':
     voxel_granularity = 400
     # 真实世界尺度(米)对应的voxel格子数
     voxel_scale = voxel_granularity / (border_thresh[3] - border_thresh[0])
-    seq_id = 21
+    seq_id = 2
     # 初始化imu数据
     imu_path = './data/imuseq/%d' % seq_id
     # imu数据处理器
@@ -313,19 +340,31 @@ if __name__ == '__main__':
         # ID自增 防止LABEL重复
         increasing_id += len(set(clustering.labels_))
         # 处理聚类结果
-        centers = process_clustering_result(xx, yy, zz * 100, cl_rst, fig)
+        centers = process_clustering_result(xx, yy, zz, cl_rst, fig)
         print(centers.shape)
         # 与上一帧的结果对比并追踪目标
         if len(last_frame_centers) > 0:
-            centers = track(prev=last_frame_centers, cur=centers, distance_th=2.5 * voxel_scale)
+            centers = track(
+                prev=last_frame_centers, cur=centers,
+                distance_th=2.5 * voxel_scale,
+                beta=0.3
+            )
             print('LABELS: ', centers[:, 3])
             print('=' * 20)
         last_frame_centers = centers
+
         # 可视化结果
+        # 仅可视化出现3帧以上的目标
+        centers = centers[
+            np.where(
+                centers[:, 6] > 2
+            )
+        ]
+        if len(centers) == 0: continue
         nodes = mayavi.mlab.points3d(
             centers[:, 0],
             centers[:, 1],
-            centers[:, 2],
+            centers[:, 2] * 100,
             # clustering.labels_,
             # mode="cube",
             mode="cube",
@@ -339,13 +378,19 @@ if __name__ == '__main__':
             mayavi.mlab.text3d(
                 center[0] + 2,
                 center[1] + 2,
-                center[2] + 2,
-                '%.0f (%.1f, %.1f)' % (center[3], center[4], center[5]),
+                center[2] * 100 + 2,
+                '%.0f (%.1f, %.1f)' % (
+                    center[3],
+                    np.sqrt(center[4] ** 2 + center[5] ** 2),
+                    # center[7]
+                    np.arctan(center[4] / center[5])
+                ),
                 scale=5,
                 figure=fig,
             )
         nodes.glyph.scale_mode = 'scale_by_vector'
         nodes.mlab_source.dataset.point_data.scalars = centers[:, 3] / max(centers[:, 3])
+        # nodes.mlab_source.dataset.point_data.scalars = centers[:, 7] / max(centers[:, 7])
         xx, yy, zz = np.where(overlapped_pc_mat > 0)
         mayavi.mlab.points3d(
             xx, yy, zz,
