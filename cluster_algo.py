@@ -456,7 +456,8 @@ if __name__ == '__main__':
             clustering = DBSCAN(
                 eps=CLUSTERING_EPS * voxel_scale,
                 min_samples=CLUSTERING_MIN_SP,
-                n_jobs=-1).fit(
+                n_jobs=-1
+            ).fit(
                 np.hstack([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)])
             )
             cl_rst = np.array(clustering.labels_)
