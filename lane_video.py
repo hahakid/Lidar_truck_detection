@@ -19,13 +19,13 @@ def cmp_file(a: str, b: str):
         return -1
 
 
-base_dir = './output/2'
+base_dir = './output/4'
 file_list = os.listdir(base_dir)
 file_list = sorted(file_list * 3, key=functools.cmp_to_key(cmp_file))
 fps = 24
 fourcc = cv2.VideoWriter_fourcc(*"mp4v")
 video = cv2.VideoWriter(
-    'cluster_2.mp4',
+    'cluster_4.mp4',
     fourcc,
     fps,
     (1855, 1006)

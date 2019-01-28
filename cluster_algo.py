@@ -29,7 +29,7 @@ def filter_ground(point_cloud_mat, grid_size=3):
                 # if max(z) - min(z) < point_cloud_mat.shape[2] / 3:
                 #     point_cloud_mat[i:i + grid_size, j:j + grid_size, :] = 0
                 #     print(i, j, z)
-                if max(z) < point_cloud_mat.shape[2] / 2:
+                if max(z) < point_cloud_mat.shape[2] / 1.8:
                     point_cloud_mat[i:i + grid_size, j:j + grid_size, :] = 0
                 # else:
                 #     point_cloud_mat[i:i + grid_size, j:j + grid_size, :] = 1
@@ -183,55 +183,98 @@ def process_clustering_result(xx, yy, zz, cl_rst, fig):
             [x_min, y_min, z_max],
         ])
         # 　顶部底部平面
-        mlab.plot3d(
-            bounding_box[0:10, 0],
-            bounding_box[0:10, 1],
-            bounding_box[0:10, 2],
-            line_width=20,
-            tube_radius=0.1,
-            tube_sides=12
-        )
-        # 侧面三条线
-        for i in range(1, 4):
-            mlab.plot3d(
-                bounding_box[[i, i + 5], 0],
-                bounding_box[[i, i + 5], 1],
-                bounding_box[[i, i + 5], 2],
-                line_width=20,
-                tube_radius=0.1,
-                tube_sides=12
-            )
+        # mlab.plot3d(
+        #     bounding_box[0:10, 0],
+        #     bounding_box[0:10, 1],
+        #     bounding_box[0:10, 2],
+        #     line_width=20,
+        #     tube_radius=0.1,
+        #     tube_sides=12
+        # )
+        # # 侧面三条线
+        # for i in range(1, 4):
+        #     mlab.plot3d(
+        #         bounding_box[[i, i + 5], 0],
+        #         bounding_box[[i, i + 5], 1],
+        #         bounding_box[[i, i + 5], 2],
+        #         line_width=20,
+        #         tube_radius=0.1,
+        #         tube_sides=12
+        #     )
+        # 将标定框
         represents_list.append([
-            (x_max + x_min) / 2, (y_max + y_min) / 2, (z_max + z_min) / 2, category_id
+            (x_max + x_min) / 2, (y_max + y_min) / 2, (z_max + z_min) / 2,  # XYZ坐标
+            category_id,  # 类别ID
+            0, 0  # 新点的Vx和Vy速度均为0
         ])
     represents_list = np.array(represents_list)
-    # clustering = DBSCAN(eps=2.5, min_samples=1, n_jobs=-1).fit(represents_list[:, 0:3])
-    # represents_list[:, 3] = np.array(clustering.labels_)
     return represents_list
 
 
-def draw_origin(frame, fig):
-    xx, yy, zz = np.where(frame > 0)
-    mayavi.mlab.points3d(
-        xx, yy, zz,
-        # clustering.labels_,
-        # mode="cube",
-        mode="point",
-        # color=(0, 1, 0),
-        colormap='spectral',
-        figure=fig,
-        scale_factor=1
-    )
+def track(prev, cur, distance_th):
+    """
+    跟踪目标
+    目标列表矩阵的结构: [x,y,z,类别,Vx,Vy]
+    :param prev: 前一帧的目标列表
+    :param cur: 当前帧检测算出来的中心
+    :param distance_th: 两帧之间最近点的最远距离阈值
+    :return: 当前帧的目标列表
+    """
+    center_list = []
+    for prev_center in prev:
+        print('PREV: ', prev_center)
+        min_distance = 99999999
+        min_distance_center_idx = None
+        # 查找最短距离点
+        for idx, cur_center in enumerate(cur):
+            # 如果当前这个点没有被别的点选中
+            if cur_center[3] != np.inf:
+                # 比较最短距离
+                distance = np.sqrt(
+                    (prev_center[0] - cur_center[0]) ** 2 +
+                    (prev_center[1] - cur_center[1]) ** 2 +
+                    (prev_center[2] - cur_center[2]) ** 2
+                )
+                if distance < min_distance:
+                    min_distance = distance
+                    min_distance_center_idx = idx
+        # 据当前点最短点的距离小于阈值
+        if min_distance < distance_th:
+            print('MIN: ', cur[min_distance_center_idx])
+            # 当前最近点的label设置为与上一个点相同 仅坐标为当前点的
+            cur[min_distance_center_idx][3] = prev_center[3]
+            # 计算速度
+            # Vx
+            cur[min_distance_center_idx][4] = \
+                (cur[min_distance_center_idx][0] - prev_center[0]) / voxel_scale / FRAME_TIME_INTERVAL
+            # Vy
+            cur[min_distance_center_idx][5] = \
+                (cur[min_distance_center_idx][1] - prev_center[1]) / voxel_scale / FRAME_TIME_INTERVAL
+            # 加入当前帧的结果列表
+            center_list.append(cur[min_distance_center_idx].tolist())
+            # 标记当前位置已经选择过
+            cur[min_distance_center_idx][3] = np.inf
+    # 把当前列表中的 从前没有出现过的新节点添加到当前帧
+    # TODO 新增的中心点要有新的标号
+    for cur_center in cur:
+        if cur_center[3] != np.inf:
+            print('NEW: ', cur_center)
+            center_list.append(list(cur_center))
+    print('=' * 20)
+    # return np.vstack(center_list)
+    return np.array(center_list)
 
 
 if __name__ == '__main__':
     # 可视化
+    # 帧间隔
+    FRAME_TIME_INTERVAL = 0.1
     # 体素边界
     border_thresh = (-50, -60, -1.9, 50, 60, 2.4)
     voxel_granularity = 400
     # 真实世界尺度(米)对应的voxel格子数
     voxel_scale = voxel_granularity / (border_thresh[3] - border_thresh[0])
-    seq_id = 1
+    seq_id = 21
     # 初始化imu数据
     imu_path = './data/imuseq/%d' % seq_id
     # imu数据处理器
@@ -240,6 +283,9 @@ if __name__ == '__main__':
     # 获得多帧融合之后的点云
     velo_path = './data/veloseq/%d' % seq_id
 
+    # 上一帧的结果
+    last_frame_centers = []
+    increasing_id = 0
     # 计算多帧的聚类结果
     for frame_file in sorted(os.listdir(velo_path), key=functools.cmp_to_key(cmp)):
         fig = mayavi.mlab.figure(mlab.gcf(), bgcolor=(0, 0, 0), size=(640 * 2, 360 * 2))
@@ -264,9 +310,18 @@ if __name__ == '__main__':
             np.hstack([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)])
         )
         cl_rst = np.array(clustering.labels_)
+        # ID自增 防止LABEL重复
+        increasing_id += len(set(clustering.labels_))
         # 处理聚类结果
         centers = process_clustering_result(xx, yy, zz * 100, cl_rst, fig)
         print(centers.shape)
+        # 与上一帧的结果对比并追踪目标
+        if len(last_frame_centers) > 0:
+            centers = track(prev=last_frame_centers, cur=centers, distance_th=2.5 * voxel_scale)
+            print('LABELS: ', centers[:, 3])
+            print('=' * 20)
+        last_frame_centers = centers
+        # 可视化结果
         nodes = mayavi.mlab.points3d(
             centers[:, 0],
             centers[:, 1],
@@ -275,10 +330,20 @@ if __name__ == '__main__':
             # mode="cube",
             mode="cube",
             # color=(0, 1, 0),
+            # vmax=100,
             colormap='spectral',
             figure=fig,
             scale_factor=3
         )
+        for center in centers:
+            mayavi.mlab.text3d(
+                center[0] + 2,
+                center[1] + 2,
+                center[2] + 2,
+                '%.0f (%.1f, %.1f)' % (center[3], center[4], center[5]),
+                scale=5,
+                figure=fig,
+            )
         nodes.glyph.scale_mode = 'scale_by_vector'
         nodes.mlab_source.dataset.point_data.scalars = centers[:, 3] / max(centers[:, 3])
         xx, yy, zz = np.where(overlapped_pc_mat > 0)
@@ -292,10 +357,8 @@ if __name__ == '__main__':
             figure=fig,
             scale_factor=1
         )
-        # mlab.outline()
-        # mlab.show()
         # xy平面0度 z轴0度 摄像机离xy平面300米 焦点在整个图形中点
-        mlab.view(0, 30, 540, focalpoint=(overlapped_pc_mat.shape[0] / 2, overlapped_pc_mat.shape[1] / 2, 0))
+        mlab.view(0, 30, 640, focalpoint=(overlapped_pc_mat.shape[0] / 2, overlapped_pc_mat.shape[1] / 2, 0))
         # 创建文件夹并保存
         if not os.path.exists('./output/%d' % (seq_id)):
             os.mkdir('./output/%d' % (seq_id))
