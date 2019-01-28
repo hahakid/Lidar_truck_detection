@@ -338,7 +338,7 @@ if __name__ == '__main__':
         velo_path = './data/veloseq/%d' % seq_id
 
         # 上一帧的结果
-        last_frame_centers = []
+        last_frame_tracking_list = []
         # 计算多帧的聚类结果
         fig = mayavi.mlab.figure(mlab.gcf(), bgcolor=(0, 0, 0), size=(640 * 2, 360 * 2))
         for frame_file in sorted(os.listdir(velo_path), key=functools.cmp_to_key(cmp)):
@@ -352,12 +352,13 @@ if __name__ == '__main__':
                 overlap_frame_count=OVERLAP_FRAME_COUNT,
                 voxel_granularity=VOXEL_GRANULARITY
             )
-            # xx, yy, zz = np.where(compared_mat > 0)
             xx, yy, zz = np.where(overlapped_pc_mat > 0)
+
             # 放缩z轴
             zz = np.array(zz, dtype=np.float32) * 0.01
 
             if len(xx) == 0: continue
+
             # 聚类
             clustering = DBSCAN(
                 eps=CLUSTERING_EPS * voxel_scale,
@@ -366,33 +367,35 @@ if __name__ == '__main__':
                 np.hstack([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)])
             )
             cl_rst = np.array(clustering.labels_)
+
             # 处理聚类结果
-            centers = process_clustering_result(xx, yy, zz, cl_rst, fig)
-            print(centers.shape)
+            tracking_list = process_clustering_result(xx, yy, zz, cl_rst, fig)
+
             # 与上一帧的结果对比并追踪目标
-            if len(last_frame_centers) > 0:
-                centers = track(
-                    prev=last_frame_centers, cur=centers,
+            if len(last_frame_tracking_list) > 0:
+                tracking_list = track(
+                    prev=last_frame_tracking_list, cur=tracking_list,
                     distance_th=NN_DISTANCE_TH * voxel_scale,
                     beta1=BETA_POS,
                     beta2=BETA_V
                 )
-                print('LABELS: ', centers[:, 3])
+                print('LABELS: ', tracking_list[:, 3])
                 print('=' * 20)
-            last_frame_centers = centers
+
+            last_frame_tracking_list = tracking_list
 
             # 可视化结果
             # 仅可视化出现3帧以上的目标
-            centers = centers[
+            tracking_list = tracking_list[
                 np.where(
-                    centers[:, 6] > 2
+                    tracking_list[:, 6] > 2
                 )
             ]
-            if len(centers) == 0: continue
+            if len(tracking_list) == 0: continue
             nodes = mayavi.mlab.points3d(
-                centers[:, 0],
-                centers[:, 1],
-                centers[:, 2] * 100,
+                tracking_list[:, 0],
+                tracking_list[:, 1],
+                tracking_list[:, 2] * 100,
                 # clustering.labels_,
                 # mode="cube",
                 mode="cube",
@@ -402,7 +405,7 @@ if __name__ == '__main__':
                 figure=fig,
                 scale_factor=3
             )
-            for center in centers:
+            for center in tracking_list:
                 mayavi.mlab.text3d(
                     center[0] + 2,
                     center[1] + 2,
@@ -416,8 +419,10 @@ if __name__ == '__main__':
                     figure=fig,
                 )
             nodes.glyph.scale_mode = 'scale_by_vector'
-            nodes.mlab_source.dataset.point_data.scalars = centers[:, 3] / max(centers[:, 3])
+            nodes.mlab_source.dataset.point_data.scalars = tracking_list[:, 3] / max(tracking_list[:, 3])
             # nodes.mlab_source.dataset.point_data.scalars = centers[:, 7] / max(centers[:, 7])
+
+            # 可视化原始点云
             xx, yy, zz = np.where(overlapped_pc_mat > 0)
             mayavi.mlab.points3d(
                 xx, yy, zz,
