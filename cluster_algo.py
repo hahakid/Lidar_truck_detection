@@ -17,7 +17,7 @@ from mpl_toolkits.mplot3d import Axes3D
 
 def filter_ground(point_cloud_mat, grid_size=3):
     """
-    过滤掉大地
+    过滤掉地面
     :param point_cloud_mat: 点云
     :param grid_size: 网格大小
     :return:
@@ -153,6 +153,15 @@ def test_slam():
 
 
 def process_clustering_result(xx, yy, zz, cl_rst, fig):
+    """
+    处理过滤聚类的结果
+    :param xx: x列表
+    :param yy: y列表
+    :param zz: z列表
+    :param cl_rst: 聚类结果的类别列表
+    :param fig: 可视化boundingbox的figure
+    :return:
+    """
     # 删除标签为-1的噪声点
     pc = np.vstack([xx, yy, zz, cl_rst]).T
     # pc = pc[np.where(cl_rst != -1)]
@@ -169,10 +178,10 @@ def process_clustering_result(xx, yy, zz, cl_rst, fig):
         z_max = points[:, 2].max()
 
         # 删除底面积过小的块
-        if (abs(x_max - x_min) / voxel_scale) * (abs(y_max - y_min) / voxel_scale) < 2: continue
+        if (abs(x_max - x_min) / voxel_scale) * (abs(y_max - y_min) / voxel_scale) < MIN_XY_PLATE: continue
 
         # 删除大于车身长度过长的块
-        if np.sqrt((x_max - x_min) ** 2 + (y_max - y_min) ** 2) > 18 * voxel_scale: continue
+        if np.sqrt((x_max - x_min) ** 2 + (y_max - y_min) ** 2) > MAX_TRUCK_LENGTH * voxel_scale: continue
         # 绘制bounding box
         # bounding_box = np.vstack([
         #     # 底部平面
@@ -227,13 +236,16 @@ def process_clustering_result(xx, yy, zz, cl_rst, fig):
 def track(prev, cur, distance_th, beta1, beta2):
     """
     跟踪目标
-    目标列表矩阵的结构: [x,y,z,类别,Vx,Vy,Life,TotalDis]
+    目标列表矩阵的结构: [x,y,z,目标ID,Vx,Vy,Life,TotalDis]
     :param prev: 前一帧的目标列表
     :param cur: 当前帧检测算出来的中心
     :param distance_th: 两帧之间最近点的最远距离阈值
     :param beta1: 位置估计权重衰减值
     :param beta2: 速度估计权重衰减值
-    :return: 当前帧的目标列表
+    :return: 当前帧的目标列表 大小是n x 8
+    每一行是8个元素
+    [x,y,z,目标ID,Vx,Vy,Life,TotalDis]
+
     """
     center_list = []
     for prev_center in prev:
@@ -305,6 +317,71 @@ def track(prev, cur, distance_th, beta1, beta2):
     return np.array(center_list)
 
 
+def visualize_result(tracking_list):
+    """
+    可视化在点云中正在跟踪的目标
+    :param tracking_list:
+    :return:
+    """
+    # 仅可视化出现3帧以上的目标
+    tracking_list = tracking_list[
+        np.where(
+            tracking_list[:, 6] > 2
+        )
+    ]
+    if len(tracking_list) == 0: return
+    nodes = mayavi.mlab.points3d(
+        tracking_list[:, 0],
+        tracking_list[:, 1],
+        tracking_list[:, 2] * 100,
+        # clustering.labels_,
+        # mode="cube",
+        mode="cube",
+        # color=(0, 1, 0),
+        # vmax=100,
+        colormap='spectral',
+        figure=fig,
+        scale_factor=3
+    )
+    for center in tracking_list:
+        mayavi.mlab.text3d(
+            center[0] + 2,
+            center[1] + 2,
+            center[2] * 100 + 2,
+            '%.0f (%.1f, %.1f)' % (
+                center[3],
+                np.sqrt(center[4] ** 2 + center[5] ** 2),
+                np.arctan(center[4] / center[5]),
+            ),
+            scale=5,
+            figure=fig,
+        )
+    nodes.glyph.scale_mode = 'scale_by_vector'
+    nodes.mlab_source.dataset.point_data.scalars = tracking_list[:, 3] / max(tracking_list[:, 3])
+    # nodes.mlab_source.dataset.point_data.scalars = centers[:, 7] / max(centers[:, 7])
+
+    # 可视化原始点云
+    xx, yy, zz = np.where(overlapped_pc_mat > 0)
+    mayavi.mlab.points3d(
+        xx, yy, zz,
+        # clustering.labels_,
+        # mode="cube",
+        mode="point",
+        # color=(0, 1, 0),
+        colormap='spectral',
+        figure=fig,
+        scale_factor=1
+    )
+    # mlab.outline()
+    # xy平面0度 z轴0度 摄像机离xy平面300米 焦点在整个图形中点
+    mlab.view(0, 30, 640, focalpoint=(overlapped_pc_mat.shape[0] / 2, overlapped_pc_mat.shape[1] / 2, 0))
+    # 创建文件夹并保存
+    if not os.path.exists('./output/%d' % (seq_id)):
+        os.mkdir('./output/%d' % (seq_id))
+    mlab.savefig(filename='./output/%d/%d.png' % (seq_id, frame_id), figure=fig)
+    mlab.clf()
+
+
 if __name__ == '__main__':
     # 帧时间间隔(s)
     FRAME_TIME_INTERVAL = 0.1
@@ -312,18 +389,20 @@ if __name__ == '__main__':
     # 重叠的帧数
     OVERLAP_FRAME_COUNT = 2
 
-    # 体素边界
+    # 点云边界
     BORDER_TH = (-60, -50, -1.9, 60, 50, 2.4)
 
     # 体素化粒度
     VOXEL_GRANULARITY = 400
 
-    # 真实世界尺度(米)对应的voxel格子数
-    voxel_scale = VOXEL_GRANULARITY / (BORDER_TH[3] - BORDER_TH[0])
-
     # 聚类参数
     CLUSTERING_EPS = 1.3
     CLUSTERING_MIN_SP = 5
+
+    # 某个类别的最小头影面积
+    MIN_XY_PLATE = 2
+    # 最长的车身长度 大于这个长度的就被过滤
+    MAX_TRUCK_LENGTH = 18
 
     # 近邻传播的距离阈值
     NN_DISTANCE_TH = 2.5
@@ -332,20 +411,27 @@ if __name__ == '__main__':
     BETA_POS = 0.3
     BETA_V = 0.75
 
+    # 是否可视化
+    VISUALIZE = False
+
     # 追踪并可视化
     for seq_id in range(1, 31):
+
+        # 真实世界尺度(米)对应的voxel格子数
+        voxel_scale = VOXEL_GRANULARITY / (BORDER_TH[3] - BORDER_TH[0])
+
         # 初始化imu数据
         imu_path = './data/imuseq/%d' % seq_id
-        # imu数据处理器
-        imu_data_processer = get_imu_data()
+        imu_data_processer = get_imu_data()  # imu数据处理器
         next(imu_data_processer)
-        # 获得多帧融合之后的点云
+
         velo_path = './data/veloseq/%d' % seq_id
 
-        # 上一帧的结果
+        # 上一帧的目标列表
         last_frame_tracking_list = []
+        # 初始化绘图的figure
+        if VISUALIZE: fig = mayavi.mlab.figure(mlab.gcf(), bgcolor=(0, 0, 0), size=(640 * 2, 360 * 2))
         # 计算多帧的聚类结果
-        fig = mayavi.mlab.figure(mlab.gcf(), bgcolor=(0, 0, 0), size=(640 * 2, 360 * 2))
         for frame_file in sorted(os.listdir(velo_path), key=functools.cmp_to_key(cmp)):
             print(frame_file)
             frame_id = int(frame_file.replace('.bin', ''))
@@ -384,66 +470,13 @@ if __name__ == '__main__':
                     beta1=BETA_POS,
                     beta2=BETA_V
                 )
-                print('LABELS: ', tracking_list[:, 3])
-                print('=' * 20)
 
+            # 保存为下一阵的前驱结果
             last_frame_tracking_list = tracking_list
+            print('=' * 20)
+            print('FRAME # %d: ' % frame_id)
+            print(tracking_list)
 
-            # 可视化结果
-            # 仅可视化出现3帧以上的目标
-            tracking_list = tracking_list[
-                np.where(
-                    tracking_list[:, 6] > 2
-                )
-            ]
-            if len(tracking_list) == 0: continue
-            nodes = mayavi.mlab.points3d(
-                tracking_list[:, 0],
-                tracking_list[:, 1],
-                tracking_list[:, 2] * 100,
-                # clustering.labels_,
-                # mode="cube",
-                mode="cube",
-                # color=(0, 1, 0),
-                # vmax=100,
-                colormap='spectral',
-                figure=fig,
-                scale_factor=3
-            )
-            for center in tracking_list:
-                mayavi.mlab.text3d(
-                    center[0] + 2,
-                    center[1] + 2,
-                    center[2] * 100 + 2,
-                    '%.0f (%.1f, %.1f)' % (
-                        center[3],
-                        np.sqrt(center[4] ** 2 + center[5] ** 2),
-                        np.arctan(center[4] / center[5]),
-                    ),
-                    scale=5,
-                    figure=fig,
-                )
-            nodes.glyph.scale_mode = 'scale_by_vector'
-            nodes.mlab_source.dataset.point_data.scalars = tracking_list[:, 3] / max(tracking_list[:, 3])
-            # nodes.mlab_source.dataset.point_data.scalars = centers[:, 7] / max(centers[:, 7])
-
-            # 可视化原始点云
-            xx, yy, zz = np.where(overlapped_pc_mat > 0)
-            mayavi.mlab.points3d(
-                xx, yy, zz,
-                # clustering.labels_,
-                # mode="cube",
-                mode="point",
-                # color=(0, 1, 0),
-                colormap='spectral',
-                figure=fig,
-                scale_factor=1
-            )
-            # mlab.outline()
-            # xy平面0度 z轴0度 摄像机离xy平面300米 焦点在整个图形中点
-            mlab.view(0, 30, 640, focalpoint=(overlapped_pc_mat.shape[0] / 2, overlapped_pc_mat.shape[1] / 2, 0))
-            # 创建文件夹并保存
-            if not os.path.exists('./output/%d' % (seq_id)):
-                os.mkdir('./output/%d' % (seq_id))
-            mlab.savefig(filename='./output/%d/%d.png' % (seq_id, frame_id), figure=fig)
-            mlab.clf()
+            if VISUALIZE:
+                # 可视化结果
+                visualize_result(tracking_list)
