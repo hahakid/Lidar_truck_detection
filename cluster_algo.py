@@ -6,14 +6,11 @@ import time
 import mayavi
 import pyproj
 import numpy as np
-from sklearn.cluster import DBSCAN, AgglomerativeClustering
+from sklearn.cluster import DBSCAN
 
 from PointcloudVoxelizer.source import pointclouds_to_voxelgrid
-from funtiontest import load_velo_scan, cmp
+from functions.funtiontest import load_velo_scan, cmp
 from mayavi import mlab
-
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 
 
 def filter_ground(point_cloud_mat, grid_size=3):

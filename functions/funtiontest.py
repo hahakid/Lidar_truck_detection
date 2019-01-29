@@ -1,17 +1,12 @@
-import time
 import functools
 import numpy as np
 import os
-import panoramic
-import top_view
-import mayavi_viz
-import cv2
+from functions import top_view
 import matplotlib.pyplot as plt
 import struct
 from mayavi import mlab
 import mayavi
 from PointcloudVoxelizer.source import pointclouds_to_voxelgrid
-from mpl_toolkits.mplot3d import Axes3D
 from sklearn.cluster import DBSCAN
 
 border_thresh = (-30, -20, -1.6, 30, 40, 2.4)

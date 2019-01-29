@@ -1,12 +1,8 @@
-import functools
 import os
-import csv
 
 import mayavi
-import pyproj
 import numpy as np
-import pylab as plt
-from funtiontest import load_velo_scan_v0
+from functions.funtiontest import load_velo_scan_v0
 from mayavi import mlab
 
 # 坐标对齐
