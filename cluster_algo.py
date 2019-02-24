@@ -11,6 +11,8 @@ from sklearn.cluster import DBSCAN
 from PointcloudVoxelizer.source import pointclouds_to_voxelgrid
 from functions.funtiontest import load_velo_scan, cmp
 from mayavi import mlab
+import pylab as plt
+import cv2
 
 
 def filter_ground(point_cloud_mat, grid_size=3):
@@ -219,6 +221,10 @@ def process_clustering_result(xx, yy, zz, cl_rst, fig):
         #     category_id,  # 类别ID
         #     0, 0  # 新点的Vx和Vy速度均为0
         # ])
+        # 计算最小外接矩形
+        area_rect = cv2.minAreaRect(np.asarray(points[:, :2], dtype=np.int32))
+        # 求4个顶点box
+        box = cv2.boxPoints(area_rect)
         # 使用算术中心
         represents_list.append([
             np.mean(points[:, 0]), np.mean(points[:, 1]), np.mean(points[:, 2]),  # XYZ坐标
@@ -226,6 +232,7 @@ def process_clustering_result(xx, yy, zz, cl_rst, fig):
             0, 0,  # 新点的Vx和Vy速度均为0,
             0,  # 生命周期
             0,  # 累计速度
+            *box.reshape(-1)  # 最小外接矩阵box的四角坐标
         ])
     represents_list = np.array(represents_list)
     return represents_list
@@ -240,9 +247,9 @@ def track(prev, cur, distance_th, beta1, beta2):
     :param distance_th: 两帧之间最近点的最远距离阈值
     :param beta1: 位置估计权重衰减值
     :param beta2: 速度估计权重衰减值
-    :return: 当前帧的目标列表 大小是n x 8
-    每一行是8个元素
-    [x,y,z,目标ID,Vx,Vy,Life,TotalDis]
+    :return: 当前帧的目标列表 大小是n x 16
+    每一行是16个元素
+    [x,y,z,目标ID,Vx,Vy,Life,TotalDis,[4个外接矩形的顶点坐标(x1,y1)~(x4,y4)]]
 
     """
     center_list = []
@@ -411,7 +418,7 @@ if __name__ == '__main__':
     BETA_V = 0.75
 
     # 是否可视化
-    VISUALIZE = True
+    VISUALIZE = False
 
     # 追踪并可视化
     for seq_id in range(1, 31):
@@ -477,8 +484,12 @@ if __name__ == '__main__':
             # tracking list的坐标均为大地坐标系
             print('=' * 15, 'FRAME # %d: ' % frame_id, '=' * 15)
             elapsed = (time.clock() - start)
+            # 输出tracking_list的标注结果
+            for obj in tracking_list:
+                print('Corner1-4: ', obj[8:16].reshape(-1, 2))
+                print('Speed: ', np.sqrt(obj[4] ** 2 + obj[5] ** 2))
+                print('Alt: ', np.arctan(obj[4] / (obj[5] + 1e-10)))
             print("Time used:", elapsed)
-            print(tracking_list)
 
             if VISUALIZE:
                 # 可视化结果
