@@ -86,6 +86,7 @@ def get_window_merged(start_pos, length=3):
     :param length:
     :return:
     """
+    global cur_car_position
     merged = []
     imu_data = []
     # 读取一系列帧数据
@@ -102,6 +103,8 @@ def get_window_merged(start_pos, length=3):
         # )]
         # 获取imu数据
         abs_x, abs_y, heading = imu_data_processer.send(os.path.join(imu_path, '%d.txt' % i))
+        # 保存车体绝对位置坐标
+        cur_car_position = np.array([abs_x, abs_y])
         # 旋转并平移
         velo = rotate(velo, heading)
         velo[:, 0] = abs_x + velo[:, 0]
@@ -420,6 +423,9 @@ if __name__ == '__main__':
     # 是否可视化
     VISUALIZE = False
 
+    # 当前帧的车体在大地坐标系下的绝对坐标
+    cur_car_position = np.array([0, 0])
+
     # 追踪并可视化
     for seq_id in range(1, 31):
 
@@ -486,11 +492,11 @@ if __name__ == '__main__':
             elapsed = (time.clock() - start)
             # 输出tracking_list的标注结果
             for obj in tracking_list:
-                print('Corner1-4: ', obj[8:16].reshape(-1, 2))
-                print('Speed: ', np.sqrt(obj[4] ** 2 + obj[5] ** 2))
+                # 转化为真实距离坐标系的距离尺度 并捡调偏移
+                print('Corner1-4: ', obj[8:16].reshape(-1, 2) / voxel_scale - cur_car_position)
+                print('Speed: ', np.sqrt(obj[4] ** 2 + obj[5] ** 2) / voxel_scale)
                 print('Alt: ', np.arctan(obj[4] / (obj[5] + 1e-10)))
             print("Time used:", elapsed)
-
             if VISUALIZE:
                 # 可视化结果
                 visualize_result(tracking_list)
