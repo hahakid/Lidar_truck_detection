@@ -25,7 +25,7 @@ def cmp_file(a: str, b: str):
 
 seq_id = 1
 imu_root = '../data/imuseq/%d' % seq_id
-origin = None
+ORIGIN = None
 path_points = []
 for imu_file_path in sorted(os.listdir(imu_root), key=functools.cmp_to_key(cmp_file)):
     f_csv = csv.reader(open(os.path.join(imu_root, imu_file_path), 'r'), delimiter=' ')
@@ -35,11 +35,11 @@ for imu_file_path in sorted(os.listdir(imu_root), key=functools.cmp_to_key(cmp_f
     p2 = pyproj.Proj(init="epsg:3857")  # 定义转换投影坐标系
     x1, y1 = p1(float(lon), float(lat))
     x2, y2 = pyproj.transform(p1, p2, x1, y1, radians=True)
-    if origin is None:
-        origin = (x2, y2)
+    if ORIGIN is None:
+        ORIGIN = (x2, y2)
     # 调整以第一个点坐标为原点
-    x2 -= origin[0]
-    y2 -= origin[1]
+    x2 -= ORIGIN[0]
+    y2 -= ORIGIN[1]
     path_points.append([x2, y2, float(v)])
     print(float(direction))
 path_points = np.array(path_points)

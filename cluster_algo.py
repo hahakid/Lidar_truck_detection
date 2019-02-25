@@ -72,18 +72,18 @@ def process_imu_data(lat, lon, direction, v, rtk):
     :param rtk: RTK状态
     :return: (x,y,航向)
     """
-    global origin
+    global ORIGIN
     p1 = pyproj.Proj(init="epsg:4610")  # 定义数据地理坐标系
     p2 = pyproj.Proj(init="epsg:3857")  # 定义转换投影坐标系
     x1, y1 = p1(float(lon), float(lat))
     x2, y2 = pyproj.transform(p1, p2, x1, y1, radians=True)
     # 计算相对于起点的偏移
-    if origin is None:
-        origin = (x2, y2)
+    if ORIGIN is None:
+        ORIGIN = (x2, y2)
     xy_scale_factor = 0.8505  # 修正坐标转换的误差
     # xy_scale_factor = 1  # 修正坐标转换的误差
     # xy_scale_factor = 1  # 修正坐标转换的误差
-    x, y = (x2 - origin[0]) * xy_scale_factor, (y2 - origin[1]) * xy_scale_factor
+    x, y = (x2 - ORIGIN[0]) * xy_scale_factor, (y2 - ORIGIN[1]) * xy_scale_factor
     return x, y, float(direction)
 
 
@@ -403,13 +403,19 @@ def visualize_result(tracking_list, overlapped_pc_mat):
 
 
 def update(point_cloud, imu, last_frame_tracking_list):
+    """
+    接收新的帧并更新目标追踪结果
+    :param point_cloud: 当前帧的点云
+    :param imu: 当前帧的imu数据
+    :param last_frame_tracking_list: 上一帧的追踪结果
+    :return: 如果达到累计重叠的帧数 返回新的追踪列表 否则返回之前未更新的追踪列表
+    """
     # 将接收到的点云数据和imu数据存储到队列中
     PC_QUEUE.append(
         [point_cloud, imu]
     )
 
     # 当前帧的车体在大地坐标系下的绝对坐标
-
     x, y, heading = process_imu_data(*imu)
     cur_car_position = np.array([x, y])
 
@@ -510,7 +516,7 @@ if __name__ == '__main__':
     PC_QUEUE = []
 
     # 开始行驶时在大地坐标系下车体原点坐标
-    origin = None
+    ORIGIN = None
 
     # 追踪并可视化
     for seq_id in range(1, 31):
@@ -518,7 +524,7 @@ if __name__ == '__main__':
         # 真实世界尺度(米)对应的voxel格子数
         voxel_scale = VOXEL_GRANULARITY / (BORDER_TH[3] - BORDER_TH[0])
 
-        origin = None
+        ORIGIN = None
         # 初始化imu数据
         imu_path = './data/imuseq/%d' % seq_id
         imu_data_processer = get_imu_data()  # imu数据处理器
@@ -532,7 +538,6 @@ if __name__ == '__main__':
         fig = mayavi.mlab.figure(mlab.gcf(), bgcolor=(0, 0, 0), size=(640 * 2, 360 * 2)) if VISUALIZE else None
         # 计算多帧的聚类结果
         for frame_file in sorted(os.listdir(velo_path), key=functools.cmp_to_key(cmp)):
-            start = time.clock()
             frame_id = int(frame_file.replace('.bin', ''))
             if not os.path.exists(os.path.join(velo_path, '%d.bin' % (frame_id + OVERLAP_FRAME_COUNT))):
                 break
@@ -542,6 +547,7 @@ if __name__ == '__main__':
             imu_data = next(
                 csv.reader(open(os.path.join(imu_path, '%d.txt' % frame_id), 'r'), delimiter=' ')
             )
+            start = time.clock()
             # 模拟更新追踪结果
             # 保存为下一阵的前驱结果
             last_frame_tracking_list = update(velo_data, imu_data, last_frame_tracking_list)
