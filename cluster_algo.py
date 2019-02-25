@@ -62,6 +62,31 @@ def get_imu_data():
         file_path = yield x, y, float(direction)
 
 
+def process_imu_data(lat, lon, direction, v, rtk):
+    """
+    将imu数据转换为大地坐标
+    :param lat: 精度
+    :param lon: 维度
+    :param direction: 航向角
+    :param v: 速度
+    :param rtk: RTK状态
+    :return: (x,y,航向)
+    """
+    global origin
+    p1 = pyproj.Proj(init="epsg:4610")  # 定义数据地理坐标系
+    p2 = pyproj.Proj(init="epsg:3857")  # 定义转换投影坐标系
+    x1, y1 = p1(float(lon), float(lat))
+    x2, y2 = pyproj.transform(p1, p2, x1, y1, radians=True)
+    # 计算相对于起点的偏移
+    if origin is None:
+        origin = (x2, y2)
+    xy_scale_factor = 0.8505  # 修正坐标转换的误差
+    # xy_scale_factor = 1  # 修正坐标转换的误差
+    # xy_scale_factor = 1  # 修正坐标转换的误差
+    x, y = (x2 - origin[0]) * xy_scale_factor, (y2 - origin[1]) * xy_scale_factor
+    return x, y, float(direction)
+
+
 def rotate(point_cloud, angle):
     """
     以z轴为中心旋转angle角度
@@ -86,25 +111,14 @@ def get_window_merged(start_pos, length=3):
     :param length:
     :return:
     """
-    global cur_car_position
     merged = []
     imu_data = []
     # 读取一系列帧数据
     for i in range(start_pos, start_pos + length):
         # 获取点云数据
-        velo = load_velo_scan(os.path.join(velo_path, '%d.bin' % i))[:, :3]
-        # # 自身的雷达波
-        # ego_range = 15
-        # velo = velo[np.where(
-        #     (velo[:, 0] > ego_range) |
-        #     (velo[:, 0] < -ego_range) |
-        #     (velo[:, 1] > ego_range) |
-        #     (velo[:, 1] < -ego_range)
-        # )]
-        # 获取imu数据
-        abs_x, abs_y, heading = imu_data_processer.send(os.path.join(imu_path, '%d.txt' % i))
-        # 保存车体绝对位置坐标
-        cur_car_position = np.array([abs_x, abs_y])
+        velo, imu = PC_QUEUE[i]
+        # 处理并转换imu数据
+        abs_x, abs_y, heading = process_imu_data(*imu)
         # 旋转并平移
         velo = rotate(velo, heading)
         velo[:, 0] = abs_x + velo[:, 0]
@@ -323,7 +337,7 @@ def track(prev, cur, distance_th, beta1, beta2):
     return np.array(center_list)
 
 
-def visualize_result(tracking_list):
+def visualize_result(tracking_list, overlapped_pc_mat):
     """
     可视化在点云中正在跟踪的目标
     :param tracking_list:
@@ -388,6 +402,75 @@ def visualize_result(tracking_list):
     mlab.clf()
 
 
+def update(point_cloud, imu, last_frame_tracking_list):
+    # 将接收到的点云数据和imu数据存储到队列中
+    PC_QUEUE.append(
+        [point_cloud, imu]
+    )
+
+    # 当前帧的车体在大地坐标系下的绝对坐标
+
+    x, y, heading = process_imu_data(*imu)
+    cur_car_position = np.array([x, y])
+
+    # 如果当前已接收的帧小于叠加的帧 直接返回之前的跟踪结果
+    if len(PC_QUEUE) < OVERLAP_FRAME_COUNT:
+        return last_frame_tracking_list
+
+    # 使用接收到的点云数据进行目标检测以及追踪
+    # 重叠并体素化 同时获取第一帧的imu数据 以在未来做逆变换
+    overlapped_pc_mat, imu_mat = overlap_voxelization(
+        point_cloud=0,  # 从队首开始取数据
+        overlap_frame_count=OVERLAP_FRAME_COUNT,
+        voxel_granularity=VOXEL_GRANULARITY
+    )
+    xx, yy, zz = np.where(overlapped_pc_mat > 0)
+
+    # 放缩z轴
+    zz = np.array(zz, dtype=np.float32) * 0.01
+
+    if len(xx) == 0: return last_frame_tracking_list
+
+    # 聚类
+    clustering = DBSCAN(
+        eps=CLUSTERING_EPS * voxel_scale,
+        min_samples=CLUSTERING_MIN_SP,
+        n_jobs=-1
+    ).fit(
+        np.hstack([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)])
+    )
+    cl_rst = np.array(clustering.labels_)
+
+    # 处理聚类结果
+    tracking_list = process_clustering_result(xx, yy, zz, cl_rst, fig)
+
+    # 与上一帧的结果对比并追踪目标
+    if len(last_frame_tracking_list) > 0:
+        tracking_list = track(
+            prev=last_frame_tracking_list, cur=tracking_list,
+            distance_th=NN_DISTANCE_TH * voxel_scale,
+            beta1=BETA_POS,
+            beta2=BETA_V
+        )
+
+    # tracking list的坐标均为大地坐标系
+    print('=' * 15, 'FRAME # %d: ' % frame_id, '=' * 15)
+    # 输出tracking_list的标注结果
+    for obj in tracking_list:
+        # 转化为真实距离坐标系的距离尺度 并捡调偏移
+        print('Corner1-4: ', obj[8:16].reshape(-1, 2) / voxel_scale - cur_car_position)
+        print('Speed: ', np.sqrt(obj[4] ** 2 + obj[5] ** 2) / voxel_scale)
+        print('Alt: ', np.arctan(obj[4] / (obj[5] + 1e-10)))
+    if VISUALIZE:
+        # 可视化结果
+        visualize_result(tracking_list, overlapped_pc_mat)
+
+    # 清除队列
+    PC_QUEUE.clear()
+
+    return tracking_list
+
+
 if __name__ == '__main__':
     # 帧时间间隔(s)
     FRAME_TIME_INTERVAL = 0.1
@@ -423,8 +506,11 @@ if __name__ == '__main__':
     # 是否可视化
     VISUALIZE = False
 
-    # 当前帧的车体在大地坐标系下的绝对坐标
-    cur_car_position = np.array([0, 0])
+    # 存储接收到的点云队列
+    PC_QUEUE = []
+
+    # 开始行驶时在大地坐标系下车体原点坐标
+    origin = None
 
     # 追踪并可视化
     for seq_id in range(1, 31):
@@ -432,6 +518,7 @@ if __name__ == '__main__':
         # 真实世界尺度(米)对应的voxel格子数
         voxel_scale = VOXEL_GRANULARITY / (BORDER_TH[3] - BORDER_TH[0])
 
+        origin = None
         # 初始化imu数据
         imu_path = './data/imuseq/%d' % seq_id
         imu_data_processer = get_imu_data()  # imu数据处理器
@@ -449,54 +536,14 @@ if __name__ == '__main__':
             frame_id = int(frame_file.replace('.bin', ''))
             if not os.path.exists(os.path.join(velo_path, '%d.bin' % (frame_id + OVERLAP_FRAME_COUNT))):
                 break
-            # 重叠并体素化 同时获取第一帧的imu数据 以在未来做逆变换
-            overlapped_pc_mat, imu_mat = overlap_voxelization(
-                point_cloud=frame_id,
-                overlap_frame_count=OVERLAP_FRAME_COUNT,
-                voxel_granularity=VOXEL_GRANULARITY
+            # 读取点云数据
+            velo_data = load_velo_scan(os.path.join(velo_path, '%d.bin' % frame_id))[:, :3]
+            # 读取imu数据
+            imu_data = next(
+                csv.reader(open(os.path.join(imu_path, '%d.txt' % frame_id), 'r'), delimiter=' ')
             )
-            xx, yy, zz = np.where(overlapped_pc_mat > 0)
-
-            # 放缩z轴
-            zz = np.array(zz, dtype=np.float32) * 0.01
-
-            if len(xx) == 0: continue
-
-            # 聚类
-            clustering = DBSCAN(
-                eps=CLUSTERING_EPS * voxel_scale,
-                min_samples=CLUSTERING_MIN_SP,
-                n_jobs=-1
-            ).fit(
-                np.hstack([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)])
-            )
-            cl_rst = np.array(clustering.labels_)
-
-            # 处理聚类结果
-            tracking_list = process_clustering_result(xx, yy, zz, cl_rst, fig)
-
-            # 与上一帧的结果对比并追踪目标
-            if len(last_frame_tracking_list) > 0:
-                tracking_list = track(
-                    prev=last_frame_tracking_list, cur=tracking_list,
-                    distance_th=NN_DISTANCE_TH * voxel_scale,
-                    beta1=BETA_POS,
-                    beta2=BETA_V
-                )
-
+            # 模拟更新追踪结果
             # 保存为下一阵的前驱结果
-            last_frame_tracking_list = tracking_list
-
-            # tracking list的坐标均为大地坐标系
-            print('=' * 15, 'FRAME # %d: ' % frame_id, '=' * 15)
+            last_frame_tracking_list = update(velo_data, imu_data, last_frame_tracking_list)
             elapsed = (time.clock() - start)
-            # 输出tracking_list的标注结果
-            for obj in tracking_list:
-                # 转化为真实距离坐标系的距离尺度 并捡调偏移
-                print('Corner1-4: ', obj[8:16].reshape(-1, 2) / voxel_scale - cur_car_position)
-                print('Speed: ', np.sqrt(obj[4] ** 2 + obj[5] ** 2) / voxel_scale)
-                print('Alt: ', np.arctan(obj[4] / (obj[5] + 1e-10)))
             print("Time used:", elapsed)
-            if VISUALIZE:
-                # 可视化结果
-                visualize_result(tracking_list)
