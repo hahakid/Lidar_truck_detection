@@ -3,6 +3,7 @@ import os
 
 import numpy as np
 import pylab as plt
+import shutil
 import time
 # from PointcloudVoxelizer.source import pointclouds_to_voxelgrid
 from functions.funtiontest import cmp, load_velo_scan
@@ -138,16 +139,21 @@ def singleframe():
     for seq_id in range(1, 31):  # 1-30
         # seq_id = 2
         # 初始化imu数据
-        father_path = './data'
-        save_path_3c = './output/feature_3c/%d' % seq_id
-        save_path_1c = './output/feature_1c/%d' % seq_id
+        father_path = '/media/hviktortsoi/D/dataset/Radar201901/Data2019/first'
+        save_path_3c = '../output/feature_3c/%d' % seq_id
+        save_path_1c = '../output/feature_1c/%d' % seq_id
+
+        if not os.path.exists('../output/feature_3c'):
+            os.mkdir('../output/feature_3c')
+        if not os.path.exists('../output/feature_1c'):
+            os.mkdir('../output/feature_1c')
 
         if not os.path.exists(save_path_3c):
             os.mkdir(save_path_3c)
         if not os.path.exists(save_path_1c):
             os.mkdir(save_path_1c)
 
-        velo_path = os.path.join(father_path, 'veloseq/%d' % seq_id)
+        velo_path = os.path.join(father_path, 'velo/%d' % seq_id)
         # 计算多帧的聚类结果
         for frame_file in sorted(os.listdir(velo_path), key=functools.cmp_to_key(cmp)):
             frame_id = int(frame_file.replace('.bin', ''))
@@ -169,6 +175,8 @@ def singleframe():
             # 转转换为平面图像
             feature_map_3c = makeBVFeature(velo, boundary, pixel)
             plt.imsave(save_path_3c + '/%d.png' % frame_id, feature_map_3c)
+            # 复制标签
+            shutil.copy(os.path.join(father_path, 'label', '%d' % seq_id, '%d.txt' % frame_id), save_path_3c)
 
 
 if __name__ == '__main__':
