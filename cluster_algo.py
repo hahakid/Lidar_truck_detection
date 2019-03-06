@@ -155,6 +155,34 @@ class ClusterDetector():
         point_cloud_rotated = np.matmul(R_matrix, point_cloud.T).T
         return point_cloud_rotated
 
+    def passthrough_filter(self, pc):
+        """
+        对点云进行passthrouh过滤
+        :param pc: 原始点云
+        :return: 过滤之后的点云
+        """
+        cloud = pcl.PointCloud_PointXYZI(np.asarray(pc, dtype=np.float32))
+        # 根据未转换的坐标过滤掉区域外部的点云
+        # 过滤X
+        passthrough = cloud.make_passthrough_filter()
+        passthrough.set_filter_field_name("x")
+        passthrough.set_filter_limits(ClusterDetector.BORDER_TH[0], ClusterDetector.BORDER_TH[3])
+        filtered_x = passthrough.filter()
+        # 过滤Y
+        passthrough = filtered_x.make_passthrough_filter()
+        passthrough.set_filter_field_name("y")
+        passthrough.set_filter_limits(ClusterDetector.BORDER_TH[1], ClusterDetector.BORDER_TH[4])
+        filtered_y = passthrough.filter()
+        # 根据配置 过滤地面
+        if ClusterDetector.IS_FILTER_GROUND:
+            passthrough = filtered_y.make_passthrough_filter()
+            passthrough.set_filter_field_name("z")
+            passthrough.set_filter_limits(ClusterDetector.GROUND_LIMIT[0], ClusterDetector.GROUND_LIMIT[1])
+            velo = passthrough.filter().to_array()
+        else:
+            velo = filtered_y.to_array()
+        return velo
+
     def get_window_merged(self, start_pos, length=3):
         """
         获取重叠几帧的数据
@@ -167,7 +195,9 @@ class ClusterDetector():
         # 读取一系列帧数据
         for i in range(start_pos, start_pos + length):
             # 获取点云数据
-            velo, imu = ClusterDetector.PC_QUEUE[i]
+            origin_velo, imu = ClusterDetector.PC_QUEUE[i]
+            # 过滤边界
+            velo = self.passthrough_filter(origin_velo)
             # 处理并转换imu数据
             abs_x, abs_y, heading = self.process_imu_data(*imu)
             # 旋转XYZ坐标 保留并拼接最后一维反射率
@@ -197,40 +227,18 @@ class ClusterDetector():
         merged_frame, imu_mat = self.get_window_merged(start_pos=point_cloud_id, length=overlap_frame_count)
         # 转化为pcl点云
         cloud = pcl.PointCloud_PointXYZI(np.asarray(merged_frame, dtype=np.float32))
-        if ClusterDetector.IS_FILTER_GROUND:
-            # 过滤掉区域外部的点云 以及地面
-            passthrough = cloud.make_passthrough_filter()
-            passthrough.set_filter_field_name("x")
-            passthrough.set_filter_limits(ClusterDetector.BORDER_TH[0], ClusterDetector.BORDER_TH[3])
-            passthrough.set_filter_field_name("y")
-            passthrough.set_filter_limits(ClusterDetector.BORDER_TH[1], ClusterDetector.BORDER_TH[4])
-            passthrough.set_filter_field_name("z")
-            passthrough.set_filter_limits(ClusterDetector.GROUND_LIMIT[0], ClusterDetector.GROUND_LIMIT[1])
-            cloud = passthrough.filter()
         # 进行voxel滤波
         sor = cloud.make_voxel_grid_filter()
-        sor.set_leaf_size(ClusterDetector.VOXEL_GRID_SIZE, ClusterDetector.VOXEL_GRID_SIZE,
-                          ClusterDetector.VOXEL_GRID_SIZE)
-        voxel = np.asarray(sor.filter())
+        sor.set_leaf_size(
+            ClusterDetector.VOXEL_GRID_SIZE,
+            ClusterDetector.VOXEL_GRID_SIZE,
+            ClusterDetector.VOXEL_GRID_SIZE
+        )
+        voxel = sor.filter().to_array()
         # 过滤地面
         # voxel = filter_ground(voxel, grid_size=FG_GRID_SIZE)
 
         return voxel, imu_mat
-
-    def test_slam(self):
-        pc_frame1, steps = self.get_window_merged(start_pos=180, length=100)
-        mayavi.mlab.points3d(pc_frame1[:, 0], pc_frame1[:, 1], pc_frame1[:, 2],
-                             # mayavi.mlab.points3d(xx, yy, zz,
-                             -pc_frame1[:, 2],  # Values used for Color
-                             # mode="cube",
-                             mode="point",
-                             colormap='spectral',  # 'bone', 'copper', 'gnuplot'
-                             figure=self.fig,
-                             # color=(1, 0, 0),  # Used a fixed (r,g,b) instead
-                             scale_factor=1,
-                             )
-        mayavi.mlab.show()
-        exit()
 
     def process_clustering_result(self, xx, yy, zz, cl_rst, unique_id, fig):
         """
