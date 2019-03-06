@@ -8,8 +8,7 @@ import pyproj
 import numpy as np
 from sklearn.cluster import DBSCAN
 
-from PointcloudVoxelizer.source import pointclouds_to_voxelgrid
-from functions.funtiontest import load_velo_scan, cmp
+from functions.utils import load_velo_scan, cmp
 from mayavi import mlab
 import pylab as plt
 import cv2
@@ -182,17 +181,17 @@ class ClusterDetector():
         merged = np.vstack(merged)
         return merged, imu_data
 
-    def overlap_voxelization(self, point_cloud, overlap_frame_count, voxel_granularity=400):
+    def overlap_voxelization(self, point_cloud_id, overlap_frame_count, voxel_granularity=400):
         """
         计算两个重叠密度增大之后的帧之间的voxel差异
-        :param point_cloud: 第一帧的位置
+        :param point_cloud_id: 第一帧的位置
         :param frame2: 第二帧的位置
         :param overlap_frame_count: 重叠帧数
         :param voxel_granularity: voxel的粒度
-        :return:
+        :return: 体素化之后的叠加点云, 当前帧的imu数据
         """
         # 获得融合后的第一帧
-        pc_frame1, imu_mat = self.get_window_merged(start_pos=point_cloud, length=overlap_frame_count)
+        pc_frame1, imu_mat = self.get_window_merged(start_pos=point_cloud_id, length=overlap_frame_count)
         # 计算体素
         # voxel_converter = pointclouds_to_voxelgrid.data_loader(point_list=pc_frame1)
         # _, _, voxel, _, _ = voxel_converter(xyz_range=BORDER_TH, mag_coeff=voxel_granularity)
@@ -403,7 +402,7 @@ class ClusterDetector():
                 center_list.append(list(cur_center))
         return np.array(center_list)
 
-    def visualize_result(self, tracking_list, seq_id):
+    def visualize_result(self, tracking_list, frame_id, seq_id):
         """
         可视化在点云中正在跟踪的目标
         :param tracking_list:
@@ -499,7 +498,7 @@ class ClusterDetector():
         # 使用接收到的点云数据进行目标检测以及追踪
         # 重叠并体素化 同时获取第一帧的imu数据 以在未来做逆变换
         cur_overlapped_pc_mat, imu_mat = self.overlap_voxelization(
-            point_cloud=0,  # 从队首开始取数据
+            point_cloud_id=0,  # 从队首开始取数据
             overlap_frame_count=ClusterDetector.OVERLAP_FRAME_COUNT,
             voxel_granularity=ClusterDetector.VOXEL_GRANULARITY
         )
@@ -592,5 +591,5 @@ if __name__ == '__main__':
             print("Time used:", elapsed)
             if ClusterDetector.VISUALIZE:
                 # 可视化结果
-                detector.visualize_result(last_frame_tracking_list, seq_id)
+                detector.visualize_result(last_frame_tracking_list, frame_id, seq_id)
             # print(results)

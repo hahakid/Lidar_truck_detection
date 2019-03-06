@@ -8,7 +8,7 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 
 from PointcloudVoxelizer.source import pointclouds_to_voxelgrid
-from functions.funtiontest import load_velo_scan, cmp
+from functions.utils import load_velo_scan, cmp
 from mayavi import mlab
 
 

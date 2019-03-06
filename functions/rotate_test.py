@@ -2,7 +2,7 @@ import os
 
 import mayavi
 import numpy as np
-from functions.funtiontest import load_velo_scan_v0
+from functions.utils import load_velo_scan_v0
 from mayavi import mlab
 
 # 坐标对齐

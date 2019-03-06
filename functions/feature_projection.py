@@ -6,7 +6,7 @@ import pylab as plt
 import shutil
 import time
 # from PointcloudVoxelizer.source import pointclouds_to_voxelgrid
-from functions.funtiontest import cmp, load_velo_scan
+from functions.utils import cmp, load_velo_scan
 from functions import top_view
 
 
