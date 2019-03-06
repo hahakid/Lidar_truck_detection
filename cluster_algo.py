@@ -170,12 +170,12 @@ class ClusterDetector():
             velo, imu = ClusterDetector.PC_QUEUE[i]
             # 处理并转换imu数据
             abs_x, abs_y, heading = self.process_imu_data(*imu)
-            # 旋转XYZ坐标 保留反射率
-            velo = np.hstack([self.rotate(velo[:, :3], heading), velo[:, :-1]])
+            # 旋转XYZ坐标 保留并拼接最后一维反射率
+            velo = np.hstack([self.rotate(velo[:, :3], heading), velo[:, -1:]])
             # 平移
             velo[:, 0] = abs_x + velo[:, 0]
             velo[:, 1] = abs_y + velo[:, 1]
-            merged.append(velo[:, :4])
+            merged.append(velo[:, :])
 
             # 存储第一帧的imu数据
             if len(imu_data) == 0:
