@@ -32,6 +32,8 @@ class ClusterDetector():
     # voxel下采样滤波的栅格尺寸
     VOXEL_GRID_SIZE = 0.3
 
+    # 是否过滤地面
+    IS_FILTER_GROUND = True
     # 过滤地面所使用的网格算法的网格大小
     FG_GRID_SIZE = 3
 
@@ -168,11 +170,12 @@ class ClusterDetector():
             velo, imu = ClusterDetector.PC_QUEUE[i]
             # 处理并转换imu数据
             abs_x, abs_y, heading = self.process_imu_data(*imu)
-            # 旋转并平移
-            velo = self.rotate(velo, heading)
+            # 旋转XYZ坐标 保留反射率
+            velo = np.hstack([self.rotate(velo[:, :3], heading), velo[:, :-1]])
+            # 平移
             velo[:, 0] = abs_x + velo[:, 0]
             velo[:, 1] = abs_y + velo[:, 1]
-            merged.append(velo[:, :3])
+            merged.append(velo[:, :4])
 
             # 存储第一帧的imu数据
             if len(imu_data) == 0:
@@ -191,23 +194,21 @@ class ClusterDetector():
         :return: 体素化之后的叠加点云, 当前帧的imu数据
         """
         # 获得融合后的第一帧
-        pc_frame1, imu_mat = self.get_window_merged(start_pos=point_cloud_id, length=overlap_frame_count)
-        # 计算体素
-        # voxel_converter = pointclouds_to_voxelgrid.data_loader(point_list=pc_frame1)
-        # _, _, voxel, _, _ = voxel_converter(xyz_range=BORDER_TH, mag_coeff=voxel_granularity)
-
-        cloud = pcl.PointCloud(np.asarray(pc_frame1, dtype=np.float32))
-        # 过滤掉区域外部的点云 以及地面
-        passthrough = cloud.make_passthrough_filter()
-        passthrough.set_filter_field_name("x")
-        passthrough.set_filter_limits(ClusterDetector.BORDER_TH[0], ClusterDetector.BORDER_TH[3])
-        passthrough.set_filter_field_name("y")
-        passthrough.set_filter_limits(ClusterDetector.BORDER_TH[1], ClusterDetector.BORDER_TH[4])
-        passthrough.set_filter_field_name("z")
-        passthrough.set_filter_limits(ClusterDetector.GROUND_LIMIT[0], ClusterDetector.GROUND_LIMIT[1])
+        merged_frame, imu_mat = self.get_window_merged(start_pos=point_cloud_id, length=overlap_frame_count)
+        # 转化为pcl点云
+        cloud = pcl.PointCloud_PointXYZI(np.asarray(merged_frame, dtype=np.float32))
+        if ClusterDetector.IS_FILTER_GROUND:
+            # 过滤掉区域外部的点云 以及地面
+            passthrough = cloud.make_passthrough_filter()
+            passthrough.set_filter_field_name("x")
+            passthrough.set_filter_limits(ClusterDetector.BORDER_TH[0], ClusterDetector.BORDER_TH[3])
+            passthrough.set_filter_field_name("y")
+            passthrough.set_filter_limits(ClusterDetector.BORDER_TH[1], ClusterDetector.BORDER_TH[4])
+            passthrough.set_filter_field_name("z")
+            passthrough.set_filter_limits(ClusterDetector.GROUND_LIMIT[0], ClusterDetector.GROUND_LIMIT[1])
+            cloud = passthrough.filter()
         # 进行voxel滤波
-        cloud_filtered = passthrough.filter()
-        sor = cloud_filtered.make_voxel_grid_filter()
+        sor = cloud.make_voxel_grid_filter()
         sor.set_leaf_size(ClusterDetector.VOXEL_GRID_SIZE, ClusterDetector.VOXEL_GRID_SIZE,
                           ClusterDetector.VOXEL_GRID_SIZE)
         voxel = np.asarray(sor.filter())
@@ -573,7 +574,7 @@ if __name__ == '__main__':
             if not os.path.exists(os.path.join(velo_path, '%d.bin' % (frame_id + ClusterDetector.OVERLAP_FRAME_COUNT))):
                 break
             # 读取点云数据
-            velo_data = load_velo_scan(os.path.join(velo_path, '%d.bin' % frame_id))[:, :3]
+            velo_data = load_velo_scan(os.path.join(velo_path, '%d.bin' % frame_id))
             # 读取imu数据
             imu_data = next(
                 csv.reader(open(os.path.join(imu_path, '%d.txt' % frame_id), 'r'), delimiter=' ')
