@@ -178,10 +178,26 @@ class ClusterDetector():
             passthrough = filtered_y.make_passthrough_filter()
             passthrough.set_filter_field_name("z")
             passthrough.set_filter_limits(ClusterDetector.GROUND_LIMIT[0], ClusterDetector.GROUND_LIMIT[1])
-            velo = passthrough.filter().to_array()
+            velo = passthrough.filter()
         else:
-            velo = filtered_y.to_array()
+            velo = filtered_y
+
         return velo
+
+    def voxel_filter(self, pc):
+        """
+        进行voxel滤波
+        :param pc: pcl点云
+        :return: voxel滤波之后的点云
+        """
+        sor = pc.make_voxel_grid_filter()
+        sor.set_leaf_size(
+            ClusterDetector.VOXEL_GRID_SIZE,
+            ClusterDetector.VOXEL_GRID_SIZE,
+            ClusterDetector.VOXEL_GRID_SIZE
+        )
+        voxel = sor.filter()
+        return voxel
 
     def get_window_merged(self, start_pos, length=3):
         """
@@ -190,14 +206,18 @@ class ClusterDetector():
         :param length:
         :return:
         """
-        merged = []
         imu_data = []
+        aligned_pc = None
         # 读取一系列帧数据
         for i in range(start_pos, start_pos + length):
             # 获取点云数据
             origin_velo, imu = ClusterDetector.PC_QUEUE[i]
+
             # 过滤边界
             velo = self.passthrough_filter(origin_velo)
+            # 体素滤波
+            velo = self.voxel_filter(velo).to_array()
+
             # 处理并转换imu数据
             abs_x, abs_y, heading = self.process_imu_data(*imu)
             # 旋转XYZ坐标 保留并拼接最后一维反射率
@@ -205,14 +225,30 @@ class ClusterDetector():
             # 平移
             velo[:, 0] = abs_x + velo[:, 0]
             velo[:, 1] = abs_y + velo[:, 1]
-            merged.append(velo[:, :])
+
+            # 配准
+            if aligned_pc is None:
+                aligned_pc = velo
+            pc_src = pcl.PointCloud(np.asarray(velo[:, :3], dtype=np.float32))
+            pc_target = pcl.PointCloud(np.asarray(aligned_pc[:, :3], dtype=np.float32))
+            icp = pc_src.make_IterativeClosestPoint()
+            converged, transf, estimate, fitness = icp.icp(pc_src, pc_target)
+
+            # 合并配准后的数据
+            aligned_pc = np.vstack([
+                # 上一帧的整体点云
+                aligned_pc,
+                # 配准后增加了反射率维度的当前点云
+                np.hstack([
+                    estimate, velo[:, -1:]
+                ])
+            ])
 
             # 存储第一帧的imu数据
             if len(imu_data) == 0:
                 imu_data = np.array([abs_x, abs_y, heading])
-        # 合并多帧
-        merged = np.vstack(merged)
-        return merged, imu_data
+
+        return aligned_pc, imu_data
 
     def overlap_voxelization(self, point_cloud_id, overlap_frame_count, voxel_granularity=400):
         """
@@ -225,20 +261,8 @@ class ClusterDetector():
         """
         # 获得融合后的第一帧
         merged_frame, imu_mat = self.get_window_merged(start_pos=point_cloud_id, length=overlap_frame_count)
-        # 转化为pcl点云
-        cloud = pcl.PointCloud_PointXYZI(np.asarray(merged_frame, dtype=np.float32))
-        # 进行voxel滤波
-        sor = cloud.make_voxel_grid_filter()
-        sor.set_leaf_size(
-            ClusterDetector.VOXEL_GRID_SIZE,
-            ClusterDetector.VOXEL_GRID_SIZE,
-            ClusterDetector.VOXEL_GRID_SIZE
-        )
-        voxel = sor.filter().to_array()
-        # 过滤地面
-        # voxel = filter_ground(voxel, grid_size=FG_GRID_SIZE)
 
-        return voxel, imu_mat
+        return merged_frame, imu_mat
 
     def process_clustering_result(self, xx, yy, zz, cl_rst, unique_id, fig):
         """
@@ -568,7 +592,7 @@ if __name__ == '__main__':
     for seq_id in range(1, 31):
         # 初始化检测类
         detector = ClusterDetector()
-        ClusterDetector.VISUALIZE = True
+        ClusterDetector.VISUALIZE = False
         # 初始化imu数据
         imu_path = './data/first/imuseq/%d' % seq_id
 
