@@ -82,25 +82,41 @@ def singlechannelfeature(PointCloud_, BoundaryCond, Discretization):
     return im
 
 
-# pc, , 512
 def makeBVFeature(PointCloud_, BoundaryCond, Discretization):  # Dis=
-    Height = Discretization + 1  #
-    Width = Discretization + 1
+    """
+    将特征投影到二维平面
+    :param PointCloud_: 点云
+    :param BoundaryCond: 边界
+    :param Discretization: 投影后的图像大小
+    :return: 投影后的二维平面
+    """
+    Height = Discretization  #
+    Width = Discretization
 
     # Discretize Feature Map
     PointCloud = np.copy(PointCloud_)
     PointCloud[:, 0] = np.int_(
-        np.floor(PointCloud[:, 0] / abs(BoundaryCond['maxX'] - BoundaryCond['minX']) * Discretization))  # x  倍增
+        np.floor((PointCloud[:, 0] - BoundaryCond['minX']) / abs(BoundaryCond['maxX'] - BoundaryCond['minX'])
+                 * Width)
+    )  # x  平移至y轴 再倍增
     PointCloud[:, 1] = np.int_(
-        np.floor(PointCloud[:, 1] / abs(BoundaryCond['maxY'] - BoundaryCond['minY']) * Discretization))  # y, 倍增+平移
+        np.floor((PointCloud[:, 1] - BoundaryCond['minY']) / abs(BoundaryCond['maxY'] - BoundaryCond['minY'])
+                 * Height)
+    )  # y  平移至x轴 再倍增
+    PointCloud[:, 2] = np.int_(
+        np.floor((PointCloud[:, 2] - BoundaryCond['minZ']) / abs(BoundaryCond['maxZ'] - BoundaryCond['minZ'])
+                 * 255)
+    )  # z  平移至x轴 再倍增
 
     indices = np.lexsort((PointCloud[:, 1], PointCloud[:, 2], PointCloud[:, 0]))
     PointCloud = PointCloud[indices]
 
+    # 图像大小
+    img_shape = (Height + 1, Width + 1)
     # Height Map & Intensity Map & DensityMap
-    heightMap = np.zeros((Height, Width))  # 空 矩阵
-    intensityMap = np.zeros((Height, Width))
-    densityMap = np.zeros((Height, Width))
+    heightMap = np.zeros(img_shape)  # 空 矩阵
+    intensityMap = np.zeros(img_shape)
+    densityMap = np.zeros(img_shape)
 
     # _, indices = np.unique(PointCloud[:, 0:2], axis=0, return_index=True)  # 去重
     _, indices, counts = np.unique(PointCloud[:, 0:2], axis=0, return_index=True, return_counts=True)
@@ -120,12 +136,11 @@ def makeBVFeature(PointCloud_, BoundaryCond, Discretization):  # Dis=
     heightMap = heightMap / heightMap.max()
     intensityMap = intensityMap / intensityMap.max()
 
-    RGB_Map = np.zeros((Height, Width, 3))
-    RGB_Map[:, :, 0] = densityMap  # r_map
-    RGB_Map[:, :, 1] = heightMap  # g_map
-    RGB_Map[:, :, 2] = intensityMap  # b_map
+    RGB_Map = np.zeros((*img_shape, 3))
+    RGB_Map[:, :, 0] = intensityMap  # r_map
+    RGB_Map[:, :, 1] = densityMap  # g_map
+    RGB_Map[:, :, 2] = heightMap  # b_map
 
-    save = np.zeros((Discretization, Discretization, 3))
     save = RGB_Map[0:Discretization, 0:Discretization, :]
     # misc.imsave('test_bv.png',save[::-1,::-1,:])
     # misc.imsave('test_bv.png',save)
