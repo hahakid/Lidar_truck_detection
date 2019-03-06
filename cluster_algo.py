@@ -229,24 +229,23 @@ class ClusterDetector():
             # 配准
             if aligned_pc is None:
                 aligned_pc = velo
-            pc_src = pcl.PointCloud(np.asarray(velo[:, :3], dtype=np.float32))
-            pc_target = pcl.PointCloud(np.asarray(aligned_pc[:, :3], dtype=np.float32))
+            pc_src = pcl.PointCloud(np.asarray(aligned_pc[:, :3], dtype=np.float32))
+            pc_target = pcl.PointCloud(np.asarray(velo[:, :3], dtype=np.float32))
             icp = pc_src.make_IterativeClosestPoint()
-            converged, transf, estimate, fitness = icp.icp(pc_src, pc_target)
+            converged, transf, estimate, fitness = icp.icp(pc_src, pc_target, )
 
             # 合并配准后的数据
             aligned_pc = np.vstack([
                 # 上一帧的整体点云
-                aligned_pc,
+                velo,
                 # 配准后增加了反射率维度的当前点云
                 np.hstack([
-                    estimate, velo[:, -1:]
+                    estimate, aligned_pc[:, -1:]
                 ])
             ])
 
-            # 存储第一帧的imu数据
-            if len(imu_data) == 0:
-                imu_data = np.array([abs_x, abs_y, heading])
+            # 存储最近一帧的imu数据
+            imu_data = np.array([abs_x, abs_y, heading])
 
         return aligned_pc, imu_data
 
@@ -261,7 +260,6 @@ class ClusterDetector():
         """
         # 获得融合后的第一帧
         merged_frame, imu_mat = self.get_window_merged(start_pos=point_cloud_id, length=overlap_frame_count)
-
         return merged_frame, imu_mat
 
     def process_clustering_result(self, xx, yy, zz, cl_rst, unique_id, fig):
@@ -592,7 +590,7 @@ if __name__ == '__main__':
     for seq_id in range(1, 31):
         # 初始化检测类
         detector = ClusterDetector()
-        ClusterDetector.VISUALIZE = False
+        ClusterDetector.VISUALIZE = True
         # 初始化imu数据
         imu_path = './data/first/imuseq/%d' % seq_id
 
