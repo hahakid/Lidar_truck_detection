@@ -229,18 +229,18 @@ class ClusterDetector():
             # 配准
             if aligned_pc is None:
                 aligned_pc = velo
-            pc_src = pcl.PointCloud(np.asarray(aligned_pc[:, :3], dtype=np.float32))
-            pc_target = pcl.PointCloud(np.asarray(velo[:, :3], dtype=np.float32))
+            pc_src = pcl.PointCloud(np.asarray(velo[:, :3], dtype=np.float32))
+            pc_target = pcl.PointCloud(np.asarray(aligned_pc[:, :3], dtype=np.float32))
             icp = pc_src.make_IterativeClosestPoint()
             converged, transf, estimate, fitness = icp.icp(pc_src, pc_target, )
 
             # 合并配准后的数据
             aligned_pc = np.vstack([
                 # 上一帧的整体点云
-                velo,
+                aligned_pc,
                 # 配准后增加了反射率维度的当前点云
                 np.hstack([
-                    estimate, aligned_pc[:, -1:]
+                    estimate, velo[:, -1:]
                 ])
             ])
 
