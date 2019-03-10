@@ -143,8 +143,8 @@ if __name__ == '__main__':
         prepaer_dirs()
 
         # 初始化imu数据
-        imu_path = './data/first/imuseq/%d' % seq_id
-        velo_path = './data/first/velo/%d' % seq_id
+        imu_path = '%s/imuseq/%d' % (dataset_root_path, seq_id)
+        velo_path = '%s/velo/%d' % (dataset_root_path, seq_id)
 
         detector = ClusterDetector()
 
