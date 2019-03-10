@@ -82,7 +82,7 @@ def singlechannelfeature(PointCloud_, BoundaryCond, Discretization):
     return im
 
 
-def makeBVFeature(PointCloud_, BoundaryCond, Discretization):  # Dis=
+def makeBVFeature(PointCloud_, BoundaryCond, Discretization, nChannels):  # Dis=
     """
     将特征投影到二维平面
     :param PointCloud_: 点云
@@ -136,15 +136,17 @@ def makeBVFeature(PointCloud_, BoundaryCond, Discretization):  # Dis=
     heightMap = heightMap / heightMap.max()
     intensityMap = intensityMap / intensityMap.max()
 
-    RGB_Map = np.zeros((*img_shape, 3))
-    RGB_Map[:, :, 0] = intensityMap  # r_map
-    RGB_Map[:, :, 1] = densityMap  # g_map
-    RGB_Map[:, :, 2] = heightMap  # b_map
+    if nChannels == 1:
+        return heightMap[0:Discretization, 0:Discretization]
+    else:
+        RGB_Map = np.zeros((*img_shape, 3))
+        RGB_Map[:, :, 0] = intensityMap  # r_map
+        RGB_Map[:, :, 1] = densityMap  # g_map
+        RGB_Map[:, :, 2] = heightMap  # b_map
 
-    save = RGB_Map[0:Discretization, 0:Discretization, :]
-    # misc.imsave('test_bv.png',save[::-1,::-1,:])
-    # misc.imsave('test_bv.png',save)
-    return save
+        threeChannelMap = RGB_Map[0:Discretization, 0:Discretization, :]
+
+        return threeChannelMap
 
 
 def singleframe():
