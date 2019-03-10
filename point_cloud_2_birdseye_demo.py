@@ -237,18 +237,28 @@ def makeBVFeature(PointCloud_, BoundaryCond, Discretization):  # Dis=
 def singleframe():
     boundary = {'minX': -30, 'maxX': 30, 'minY': -10, 'maxY': 50, 'minZ': -1.9, 'maxZ': 2.6, }
     pixel=480
-    #father_path = 'F:/daxie/daxie/data/first'
-    father_path = 'F:/daxie/daxie/data/second'
-    velosingle=False # first=True second=False
+    dataset=1 #2
 
-    for seq in range(0,33):# first=[1,30] second=[0,33]
+    if dataset==1:
+        father_path = 'F:/daxie/daxie/data/first'
+        velosingle=True # first=True second=False
+        s=[1,31]
+    elif dataset==2:
+        father_path = 'F:/daxie/daxie/data/second'
+        velosingle = False  # first=True second=False
+        s = [0, 33]
+
+    for seq in range(s[0],s[1]):
         save_path_3c = os.path.join(father_path,'birdview/feature_3c/%d' %seq)
         save_path_1c = os.path.join(father_path,'birdview/feature_1c/%d'%seq)
+        save_path_4c = os.path.join(father_path,'birdview/feature_4c/%d'%seq) #plt自动添加透明图层
 
         if not os.path.exists(save_path_3c):
             os.makedirs(save_path_3c)
         if not os.path.exists(save_path_1c):
             os.makedirs(save_path_1c)
+        if not os.path.exists(save_path_4c):
+            os.makedirs(save_path_4c)
 
         if velosingle:
             data_path = os.path.join(father_path,'velo/%d' %seq)
@@ -273,7 +283,7 @@ def singleframe():
                                                              fwd_range=(-10, 50), height_range=(-1.9, 2.6))
 
             cv2.imwrite(save_path_1c + '/%d.png' % int(frame.split('.')[0]), feature_map_1c)
-            #plt.imsave(save_path_1c + '/%d.png' % int(frame.split('.')[0]), feature_map_1c,cmap=cm.gray)
+            #plt.imsave(save_path_1c + '/_%d.png' % int(frame.split('.')[0]), feature_map_1c,cmap=cm.gray)
             # 消除多余点
             velo = removePoints(velo, boundary)
 
@@ -284,7 +294,7 @@ def singleframe():
 
             # 转转换为平面图像
             feature_map_3c = makeBVFeature(velo, boundary, pixel)
-            #plt.imsave(save_path_3c + '/%d.png' % int(frame.split('.')[0]), feature_map_3c)
+            plt.imsave(save_path_4c + '/%d.png' % int(frame.split('.')[0]), feature_map_3c)
             scale_255=np.ones((pixel,pixel,3))*255
             feature_map_3c=np.multiply(scale_255,feature_map_3c)
             cv2.imwrite(save_path_3c + '/%d.png' % int(frame.split('.')[0]), feature_map_3c)
