@@ -174,13 +174,15 @@ class ClusterDetector():
         passthrough.set_filter_limits(ClusterDetector.BORDER_TH[1], ClusterDetector.BORDER_TH[4])
         filtered_y = passthrough.filter()
         # 根据配置 过滤地面
+        passthrough = filtered_y.make_passthrough_filter()
+        passthrough.set_filter_field_name("z")
         if ClusterDetector.IS_FILTER_GROUND:
-            passthrough = filtered_y.make_passthrough_filter()
-            passthrough.set_filter_field_name("z")
+            # 如果配置了过滤地面 按照地面边缘顾虑
             passthrough.set_filter_limits(ClusterDetector.GROUND_LIMIT[0], ClusterDetector.GROUND_LIMIT[1])
-            velo = passthrough.filter()
         else:
-            velo = filtered_y
+            # 否则按照点云interest区域过滤
+            passthrough.set_filter_limits(ClusterDetector.BORDER_TH[2], ClusterDetector.BORDER_TH[5])
+        velo = passthrough.filter()
 
         return velo
 

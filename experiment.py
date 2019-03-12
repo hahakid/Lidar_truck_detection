@@ -124,17 +124,17 @@ def save_map(feature_map):
 
 if __name__ == '__main__':
     dataset_root_path = '/media/hviktortsoi/D/dataset/Radar201901/Data2019/first'
-    feature_type = '3通道'
+    feature_type = 'c1_o3_wG'
     # 初始化检测类
     # 配置各种外部参数 如是否过滤地面 是否可视化 是否叠加 叠加帧数等
     ClusterDetector.VISUALIZE = False
-    ClusterDetector.OVERLAP_FRAME_COUNT = 2  # 叠加的帧数
+    ClusterDetector.OVERLAP_FRAME_COUNT = 3 # 叠加的帧数
     ClusterDetector.VOXEL_GRID_SIZE = 0.4  # voxel滤波的尺度 单位是米
     ClusterDetector.BORDER_TH = [-30, -10, -1.9, 30, 50, 2.6]  # interesting区域
-    ClusterDetector.IS_FILTER_GROUND = True  # 过滤地面
+    ClusterDetector.IS_FILTER_GROUND = False  # 过滤地面
     ClusterDetector.GROUND_LIMIT = (0.5, 5)  # 单独设置地面高端车
-    CHANNELS = 3  # 通道数
-    SHOW_PROCESS_RESULT = True  # 显示叠加结果
+    CHANNELS = 1  # 通道数
+    SHOW_PROCESS_RESULT = False  # 显示叠加结果
 
     # 追踪并可视化
     for seq_id in range(1, 31):
